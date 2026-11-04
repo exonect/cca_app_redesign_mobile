@@ -13,7 +13,7 @@ import { errorMessage, isApiError, otherErrors, statusOf } from '@/api/errors'
 import { isOnline } from '@/offline/connectivity'
 import { outbox } from '@/offline/outbox'
 import { saveTrialPatch } from '@/offline/trialActions'
-import type { Project, Trial } from '@/shared/types'
+import type { FieldNote, Project, Trial } from '@/shared/types'
 
 import { STEPS, type StepNo } from './forms'
 
@@ -38,6 +38,9 @@ export type WorkspaceValue = {
   next: () => Promise<void>
   startTrial: () => Promise<void>
   starting: boolean
+  /** What a refused Start said is still missing, listed until it starts or is dismissed. */
+  missing: FieldNote[] | null
+  setMissing: (m: FieldNote[] | null) => void
   castError: string | null
   setCastError: (msg: string | null) => void
   notice: Notice
@@ -143,7 +146,8 @@ export function useStepForm<F>(key: string, init: (t: Trial) => F, payload: (f: 
     }
   }, [qc, trial.id, step, payload, form, accept, init, notify, validate, shown, reload])
 
-  useSaver(key, dirty, save)
+  // Only a draft's steps can be saved (legacy edit rule): a started trial never holds unsaved step work.
+  useSaver(key, dirty && trial.actions.edit, save)
 
   return { form, setForm, dirty, errors, setErrors, saving, save }
 }

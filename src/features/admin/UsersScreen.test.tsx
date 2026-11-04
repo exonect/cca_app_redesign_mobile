@@ -20,7 +20,8 @@ jest.mock('@/auth/AuthProvider', () => ({ useAuth: () => ({ user: { id: 1, full_
 
 const user = (over: Partial<User>): User => ({
   id: 1, email: 'neha@thermaxglobal.com', emp_id: 'E1001', first_name: 'Neha', last_name: 'Admin', full_name: 'Neha Admin', role: 'AD',
-  role_label: 'Admin', region: null, region_name: null, manager: null, manager_name: null, is_active: true, last_login: null, ...over,
+  role_label: 'Admin', region: null, region_name: null, manager: null, manager_name: null, is_active: true, last_login: null,
+  manager_source: 'none', entra_manager_email: null, ...over,
 })
 const me = user({})
 const other = user({ id: 2, email: 'ravi@thermaxglobal.com', emp_id: 'E1002', first_name: 'Ravi', last_name: 'Kumar', full_name: 'Ravi Kumar', role: 'CT', role_label: 'CT' })

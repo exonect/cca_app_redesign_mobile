@@ -31,12 +31,19 @@ const ORDER = Object.fromEntries(SIEVES.map(([k], i) => [k, i]))
 export const FM_SIEVES = ['4.75', '2.36', '1.18', '0.6', '0.3', '0.15']
 export const GRADING_SIEVES = ['20', '10', '4.75', '2.36', '1.18', '0.6', '0.3', '0.15']
 
-/** Default sieve sets per material, as on the lab sheet. */
+/**
+ * Default sieve sets per material, as on the legacy lab sheet: every sieve of
+ * the combined all in grading (20 mm down to 150 µm) on every material, so
+ * all eight grading points can be computed. Coarse aggregates end in the pan
+ * (the legacy last row, shown as Pan); sands have 75 µm and the pan.
+ */
+const COARSE_SIEVES = ['20', '10', '4.75', '2.36', '1.18', '0.6', '0.3', '0.15', 'pan']
+const SAND_SIEVES = ['20', '10', '4.75', '2.36', '1.18', '0.6', '0.3', '0.15', '0.075', 'pan']
 export const SIEVE_SETS: Record<string, string[]> = {
-  '20mm': ['40', '20', '12.5', '10', '4.75', 'pan'],
-  '10mm': ['20', '12.5', '10', '4.75', '2.36', 'pan'],
-  river_sand: ['4.75', '2.36', '1.18', '0.6', '0.3', '0.15', '0.075', 'pan'],
-  crushed_sand: ['4.75', '2.36', '1.18', '0.6', '0.3', '0.15', '0.075', 'pan'],
+  '20mm': COARSE_SIEVES,
+  '10mm': COARSE_SIEVES,
+  river_sand: SAND_SIEVES,
+  crushed_sand: SAND_SIEVES,
 }
 
 export type SieveOut = { sieve: string; retained: number | null; cum: number | null; cumPct: number | null; passing: number | null }
@@ -89,10 +96,12 @@ export function combine(proportions: Record<string, unknown>, passing: Record<st
 // --- Mix design -------------------------------------------------------------------
 export const AGGREGATES = ['20mm', '10mm', 'river_sand', 'crushed_sand']
 export const BINDERS = ['cement', 'fly_ash', 'ggbs', 'alcofine', 'microsilica']
-export const MATERIALS = [...BINDERS, ...AGGREGATES, 'water', 'admixture_1', 'admixture_2']
+/** Mineral admixtures that are not binders (legacy master value Fiber): no correction, not in W/C. */
+export const OTHER_MINERALS = ['fiber']
+export const MATERIALS = [...BINDERS, ...OTHER_MINERALS, ...AGGREGATES, 'water', 'admixture_1', 'admixture_2']
 export const WC_BINDERS = ['cement', 'fly_ash', 'ggbs', 'alcofine'] // legacy rule, open question Q4
 export const MATERIAL_LABEL: Record<string, string> = {
-  cement: 'Cement', fly_ash: 'Fly ash', ggbs: 'GGBS', alcofine: 'Alcofine', microsilica: 'Microsilica',
+  cement: 'Cement', fly_ash: 'Fly ash', ggbs: 'GGBS', alcofine: 'Alcofine', microsilica: 'Microsilica', fiber: 'Fiber',
   '20mm': '20 mm', '10mm': '10 mm', river_sand: 'River sand', crushed_sand: 'Crushed sand', water: 'Water',
   admixture_1: 'Admixture I', admixture_2: 'Admixture II',
 }
@@ -137,6 +146,7 @@ export function mix(materials: MixIn, batchSize: unknown) {
 }
 
 export const cementitious = (materials: MixIn) => r2(BINDERS.reduce((s, b) => s + (n(materials[b]?.ssd) ?? 0), 0))
+/** Dosage % of binder as kg/m³: a suggestion only; the admixture quantity is the one typed (legacy rule). */
 export const admixtureQty = (binder: number, dosage: unknown) => (n(dosage) === null ? null : r2((binder * n(dosage)!) / 100))
 
 // --- Cubes ------------------------------------------------------------------------
@@ -161,15 +171,27 @@ export function testDue(castAt: string | Date, age: string) {
 }
 
 // --- Recipes --------------------------------------------------------------------------
+/** Significant decimal places of a typed number ("28.50" has 1, as Decimal compares it). */
+function decimalPlaces(v: unknown): number {
+  const frac = String(v).trim().replace(/,/g, '').split('.')[1] ?? ''
+  return frac.replace(/0+$/, '').length
+}
+
 export function withBalance(components: Record<string, unknown>) {
   const parts: Record<string, number> = {}
   const errors: string[] = []
+  if (Object.keys(components).some((code) => code.trim() === '' || code.trim().length > 20)) {
+    errors.push('Raw material codes are 1 to 20 characters.')
+  }
   for (const [code, v] of Object.entries(components)) {
     const c = code.trim().toUpperCase()
     if (c === 'J000') continue
     const x = n(v)
     if (x === null) { errors.push(`Enter a percentage for ${c}.`); continue }
     if (x < 0) { errors.push(`${c} cannot be negative.`); continue }
+    if (x > 100) { errors.push(`${c} cannot be more than 100%.`); continue }
+    if (c in parts) { errors.push(`${c} is listed twice.`); continue }
+    if (decimalPlaces(v) > 2) { errors.push(`${c} can have up to 2 decimal places.`); continue }
     parts[c] = r2(x)
   }
   const others = Object.values(parts).reduce((s, x) => s + x, 0)

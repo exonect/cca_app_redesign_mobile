@@ -50,15 +50,17 @@ type OpBase = {
   error?: SyncError
 }
 
-export type CubesBody = { cubes: { weight: string | null; load: string | null }[] }
+/** tested_on: the actual test date (yyyy-mm-dd), left out to keep the stored one. */
+export type CubesBody = { cubes: { weight: string | null; load: string | null }[]; tested_on?: string }
 
 export type OpInput =
   | { kind: 'create_trial'; trialId: string; project: string; projectName: string; customerName: string }
   | { kind: 'patch_trial'; trialId: string; body: Record<string, unknown>; what?: string }
   | { kind: 'put_cubes'; trialId: string; age: string; body: CubesBody }
   | { kind: 'start_trial'; trialId: string }
-  /** uri: the kept file's name in the app's files folder (see fileKeeper); older entries hold a full path, of which only the name is used. */
-  | { kind: 'upload_attachment'; trialId: string; clientId: string; name: string; type: string; size: number | null; uri: string }
+  /** uri: the kept file's name in the app's files folder (see fileKeeper); older entries hold a full path, of which only the name is used.
+   * reading: the reading time the file belongs to ("0" to "240"), absent when not tied to one. */
+  | { kind: 'upload_attachment'; trialId: string; clientId: string; name: string; type: string; size: number | null; uri: string; reading?: string }
 
 export type Op = OpBase & OpInput
 export type OpKind = Op['kind']

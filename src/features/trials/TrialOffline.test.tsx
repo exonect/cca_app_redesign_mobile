@@ -99,7 +99,9 @@ it('keeps cube results on the phone, says so, and marks the trial not synced yet
   // Back online: the change replays and the note goes.
   mockApi.mockResolvedValue({ ...trial, cube_sets: [{ age: '7d', age_label: '7 days', cubes: [{ weight: null, load: '702.00' }], average: '31.20', tested_on: null }] })
   await act(async () => { resetConnectivity(); await outbox.flush() })
-  expect(mockApi).toHaveBeenCalledWith('/trials/t-1/cubes/7d/', { method: 'PUT', body: { cubes: [{ weight: null, load: '702' }, { weight: null, load: null }, { weight: null, load: null }] } })
+  expect(mockApi).toHaveBeenCalledWith('/trials/t-1/cubes/7d/', {
+    method: 'PUT', body: { cubes: [{ weight: null, load: '702' }, { weight: null, load: null }, { weight: null, load: null }], tested_on: '2026-11-04' },
+  })
   await waitFor(() => expect(screen.queryByText(/Not synced yet/)).toBeNull())
 })
 
@@ -125,5 +127,21 @@ it('opens a trial made on this phone before the server has it', async () => {
   await render(<QueryClientProvider client={qc}><TrialScreen /></QueryClientProvider>)
   expect(await screen.findByText('Draft trial')).toBeTruthy()
   expect(screen.getByText('Not synced yet: 1 change saved on this phone will sync when you are back online.')).toBeTruthy()
+  expect(mockApi).not.toHaveBeenCalled()
+})
+
+it('stops an offline Start that the server would refuse and lists what is missing, linked to each step', async () => {
+  const draft = { ...trial, status: 'draft', code: null, actions: { ...trial.actions, start: true, close: false } } as unknown as Trial
+  mockParams = { id: 't-1', step: '1' }
+  qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } })
+  bindQueryClient(qc)
+  qc.setQueryData(['trial', 't-1'], draft)
+  qc.setQueryData(['project', 'p-1'], project)
+  await render(<QueryClientProvider client={qc}><TrialScreen /></QueryClientProvider>)
+  await fireEvent.press(await screen.findByRole('button', { name: 'Start trial' }))
+  expect(await screen.findByText('The trial cannot start yet')).toBeTruthy()
+  expect(screen.getByRole('link', { name: 'Fresh concrete: Site temperature is required.' })).toBeTruthy()
+  expect(screen.getByRole('link', { name: 'Sieve analysis: All in grading proportions must total 100%.' })).toBeTruthy()
+  expect(outbox.getSnapshot()).toEqual([])
   expect(mockApi).not.toHaveBeenCalled()
 })

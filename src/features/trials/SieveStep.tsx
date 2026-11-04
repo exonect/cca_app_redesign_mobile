@@ -2,7 +2,7 @@
  * table fitted to phone width, total and FM, proportions and the mini all in
  * grading chart against the IS 383 band. */
 import { useQuery } from '@tanstack/react-query'
-import { useState, type ReactNode } from 'react'
+import { useState, type Dispatch, type ReactNode, type SetStateAction } from 'react'
 import { Text, View } from 'react-native'
 
 import { gradingLimitsQuery } from '@/api/hooks'
@@ -42,22 +42,41 @@ const SHOWN = ['sieves', 'proportions'] as const
 export function SieveStep({ readOnly, banners }: { readOnly: boolean; banners: ReactNode }) {
   const { trial, header } = useWorkspace()
   const { form, setForm, errors, dirty } = useStepForm<SieveForm>('sieve', sieveForm, sievePayload, sieveProblems, SHOWN)
-  const [material, setMaterial] = useState<SieveMaterial>(() => SIEVE_MATERIALS.find((m) => !trial.results?.sieves?.[m]?.complete) ?? '20mm')
+  return (
+    <Screen header={header} footer={<StepActions canSave={!readOnly} label="Sieve analysis" />}>
+      {banners}
+      {trial.sieves_copied_from && trial.status === 'draft' ? (
+        <Banner tone="info">Sieve analysis copied from {trial.sieves_copied_from}. Change it if this trial used other material.</Banner>
+      ) : null}
+      <SieveEditor form={form} setForm={setForm} errors={errors} readOnly={readOnly} results={!dirty ? trial.results ?? null : null} />
+    </Screen>
+  )
+}
+
+type SieveResults = Pick<Trial['results'], 'sieves' | 'grading' | 'errors'>
+
+/** The sieve tables, proportions and all in grading of a trial or of the
+ * project's sieve data. `results`: the server's figures when nothing is
+ * unsaved, else null for the live preview. */
+export function SieveEditor({ form, setForm, errors, readOnly, results }: {
+  form: SieveForm; setForm: Dispatch<SetStateAction<SieveForm>>; errors: Record<string, string>; readOnly: boolean; results: SieveResults | null
+}) {
+  const [material, setMaterial] = useState<SieveMaterial>(() => SIEVE_MATERIALS.find((m) => !results?.sieves?.[m]?.complete) ?? '20mm')
   const limits = useGradingLimits()
 
   // Live preview while typing; once saved (nothing pending) show what the server calculated.
-  const fromServer = !dirty && !!trial.results?.sieves
+  const fromServer = !!results?.sieves
   const live = Object.fromEntries(SIEVE_MATERIALS.map((m) => [m, analyse(form.sieves[m])])) as Record<SieveMaterial, Analysis>
   const analyses = fromServer
-    ? Object.fromEntries(SIEVE_MATERIALS.map((m) => [m, serverAnalysis(trial.results.sieves[m]) ?? live[m]])) as Record<SieveMaterial, Analysis>
+    ? Object.fromEntries(SIEVE_MATERIALS.map((m) => [m, serverAnalysis(results.sieves[m]) ?? live[m]])) as Record<SieveMaterial, Analysis>
     : live
   const passing = Object.fromEntries(SIEVE_MATERIALS.map((m) => [m, passingMap(live[m])]))
   // Same exact 2 decimal total as the server check (blank counts as 0).
   const totalText = proportionTotal(form)
   const total = Number(totalText)
   const anyProportion = SIEVE_MATERIALS.some((m) => form.proportions[m].trim() !== '')
-  const combined = fromServer && (trial.results.grading?.length ?? 0) > 0
-    ? { points: trial.results.grading.map((g) => ({ sieve: g.sieve, combined: Number(g.combined), within: g.within })), error: null }
+  const combined = fromServer && (results.grading?.length ?? 0) > 0
+    ? { points: results.grading.map((g) => ({ sieve: g.sieve, combined: Number(g.combined), within: g.within })), error: null }
     : anyProportion ? combine(form.proportions, passing, limits.data) : { points: [], error: null }
   const outside = combined.points.filter((p) => p.within === false)
   const checked = combined.points.filter((p) => p.within !== null)
@@ -68,17 +87,16 @@ export function SieveStep({ readOnly, banners }: { readOnly: boolean; banners: R
   const setProportion = (m: SieveMaterial, value: string) => setForm((f) => ({ ...f, proportions: { ...f.proportions, [m]: value } }))
 
   const a = analyses[material]
-  const serverErrors = (trial.results?.errors ?? []).filter((e) => /^(20mm|10mm|river_sand|crushed_sand):|Proportions/.test(e))
+  const serverErrors = (results?.errors ?? []).filter((e) => /^(20mm|10mm|river_sand|crushed_sand):|Proportions/.test(e))
   const fieldError = [errors.sieves, errors.proportions].filter(Boolean).join(' ')
 
   return (
-    <Screen header={header} footer={<StepActions canSave={!readOnly} label="Sieve analysis" />}>
-      {banners}
+    <>
       <Segmented label="Material" value={material} onChange={setMaterial}
         options={SIEVE_MATERIALS.map((m) => ({ value: m, label: SIEVE_MATERIAL_SHORT[m], done: analyses[m].complete }))} />
 
       <Section flush label={`${SIEVE_MATERIAL_LABEL[material]} sieve analysis`}>
-        <TableHead cols={['IS sieve', 'Retained, g', 'Passing, %']} template={COLS} />
+        <TableHead cols={['IS sieve', 'Retained, kg', 'Passing, %']} template={COLS} />
         {form.sieves[material].map((row, i) => {
           const out = a.rows.find((r) => r.sieve === row.sieve)
           const invalid = outOfRange(row.retained, LIMITS.retained)
@@ -86,7 +104,7 @@ export function SieveStep({ readOnly, banners }: { readOnly: boolean; banners: R
             <View key={row.sieve} style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 12, paddingVertical: 2, borderTopWidth: 1, borderColor: color.divider }}>
               <Text style={[{ fontFamily: font.medium, fontSize: 15, color: color.ink }, cell(76)]}>{SIEVE_LABEL[row.sieve]}</Text>
               <View style={cell('flex')}>
-                <CellInput accessibilityLabel={`Weight retained on ${SIEVE_LABEL[row.sieve]}, grams`} value={row.retained} editable={!readOnly}
+                <CellInput accessibilityLabel={`Weight retained on ${SIEVE_LABEL[row.sieve]}, kilograms`} value={row.retained} editable={!readOnly}
                   invalid={invalid} onChangeText={(v) => setRetained(i, v)} />
               </View>
               <Text testID={`pass-${row.sieve}`} style={[{ fontFamily: font.semibold, fontSize: 16, color: color.ink, textAlign: 'right', fontVariant: ['tabular-nums'] }, cell('flex')]}>
@@ -97,7 +115,7 @@ export function SieveStep({ readOnly, banners }: { readOnly: boolean; banners: R
         })}
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: 12, borderTopWidth: 2, borderColor: color.line, backgroundColor: color.head }}>
           <Text style={{ fontFamily: font.regular, fontSize: 14, color: color.subtle }}>
-            Total <Text style={{ fontFamily: font.semibold, color: color.ink }}>{num(a.total)} g</Text>
+            Total <Text style={{ fontFamily: font.semibold, color: color.ink }}>{num(a.total)} kg</Text>
           </Text>
           <Text accessibilityLiveRegion="polite" style={{ fontFamily: font.semibold, fontSize: 15, color: a.fm !== null ? color.ink : color.muted, flexShrink: 1, textAlign: 'right' }}>
             {a.fm !== null ? `FM ${f2(a.fm)}` : a.complete ? 'Complete' : 'Enter every sieve, 0 if nothing was retained'}
@@ -142,6 +160,6 @@ export function SieveStep({ readOnly, banners }: { readOnly: boolean; banners: R
         {anyProportion && total === 100 && combined.points.length === 0
           ? <Small>The curve appears once every material with a proportion has all its sieves entered.</Small> : null}
       </Section>
-    </Screen>
+    </>
   )
 }

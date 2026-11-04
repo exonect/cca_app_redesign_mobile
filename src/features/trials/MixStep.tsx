@@ -1,23 +1,26 @@
 /** Step 2, mix design: trial date and time, grade, batch size, product and
  * dosage, free W/C (read only), and the materials as an accordion whose
  * open row shows SSD, absorption, moisture, correction and adjusted. */
-import { useCallback, useState, type ReactNode } from 'react'
+import { router } from 'expo-router'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { Pressable, Text, View } from 'react-native'
 import Svg, { Polyline } from 'react-native-svg'
 
 import { toOptions, useLookups, useProducts } from '@/api/hooks'
-import { admixtureQty, AGGREGATES, BINDERS, cementitious, f2, MATERIAL_LABEL, MATERIALS, mix, n, type MixLine } from '@/shared/calc'
+import { useAuth } from '@/auth/AuthProvider'
+import { admixtureQty, AGGREGATES, BINDERS, cementitious, f2, MATERIAL_LABEL, MATERIALS, mix, n, OTHER_MINERALS, type MixLine } from '@/shared/calc'
 import type { Lookup, Trial } from '@/shared/types'
 import { Banner, Field, Picker, Screen, Small, TextField } from '@/ui/kit'
 import { color, font, TOUCH } from '@/ui/theme'
 
 import { CastAtField } from './CastAtField'
 import { num } from './format'
-import { LIMITS, mixForm, mixPayload, mixProblems, outOfRange, type MaterialEntry, type MixForm } from './forms'
-import { CellInput, cell, Output, Section, SourceNote, StepActions, TableHead, TickIcon, WarnIcon } from './parts'
+import { LIMITS, mixForm, mixPayload, mixProblems, mixSoftWarnings, outOfRange, withCoarseSource, type MaterialEntry, type MixForm } from './forms'
+import { onNewFormulation, takeNewFormulation } from './newFormulation'
+import { CellInput, cell, Output, Section, SourceNote, StepActions, TableHead, TickIcon, WarnIcon, WarnText } from './parts'
 import { useStepForm, useWorkspace } from './workspace'
 
-const MINERALS = ['fly_ash', 'ggbs', 'alcofine', 'microsilica']
+const MINERALS = ['fly_ash', 'ggbs', 'alcofine', 'microsilica', ...OTHER_MINERALS]
 const COARSE = ['20mm', '10mm']
 const FINE = ['river_sand', 'crushed_sand']
 
@@ -45,10 +48,34 @@ const COLS: (number | 'flex')[] = ['flex', 92, 76, 22]
 const SHOWN = ['cast_at', 'grade_of_concrete', 'admixture_1', 'dosage_1', 'batch_size', 'admixture_2', 'dosage_2', 'materials'] as const
 
 export function MixStep({ readOnly, banners }: { readOnly: boolean; banners: ReactNode }) {
-  const { trial, project, header, castError, setCastError } = useWorkspace()
+  const { trial, project, header, castError, setCastError, notify } = useWorkspace()
   const status = trial.status
   const problems = useCallback((f: MixForm) => mixProblems(f, status), [status])
-  const { form, setForm, errors, dirty } = useStepForm<MixForm>('mix', mixForm, mixPayload, problems, SHOWN)
+  const { form, setForm, errors, dirty, save } = useStepForm<MixForm>('mix', mixForm, mixPayload, problems, SHOWN)
+  const { hasRole } = useAuth()
+  const warns = mixSoftWarnings(form)
+
+  // Back from "New formulation": the recipe just made becomes the product (legacy), to be saved with the step.
+  useEffect(() => {
+    if (readOnly) return undefined
+    const apply = () => {
+      const id = takeNewFormulation(trial.id)
+      if (id === null) return
+      setForm((f) => ({ ...f, admixture_1: String(id) }))
+      notify({ tone: 'info', text: 'New formulation chosen as the product. Save to keep it.' })
+    }
+    apply()
+    return onNewFormulation(apply)
+  }, [trial.id, readOnly, setForm, notify])
+
+  // Legacy "New Formulation" (Admin and CT): the recipe form, prefilled from the project, then back here.
+  async function newFormulation() {
+    if (dirty && !(await save())) return
+    router.push({
+      pathname: '/recipes/[id]',
+      params: { id: 'new', for_trial: trial.id, sfdc_no: project?.sfdc_no ?? '', customer_name: project?.customer_name ?? '', project_name: project?.project_name ?? '' },
+    })
+  }
   const [open, setOpen] = useState<string | null>(null)
   const [second, setSecond] = useState(() => !!trial.admixture_2)
   const products = useProducts()
@@ -64,14 +91,12 @@ export function MixStep({ readOnly, banners }: { readOnly: boolean; banners: Rea
   const set = <K extends keyof MixForm>(k: K, v: MixForm[K]) => setForm((f) => ({ ...f, [k]: v }))
   const setMat = (m: string, k: keyof MaterialEntry, v: string) =>
     setForm((f) => ({ ...f, materials: { ...f.materials, [m]: { ...f.materials[m], [k]: v } } }))
+  // Legacy: a coarse aggregate source is copied to the other coarse row when that row has an SSD.
+  const setSource = (m: string, v: string) => (m === '20mm' || m === '10mm' ? setForm((f) => withCoarseSource(f, m, v)) : setMat(m, 'source', v))
 
-  // Live preview: admixture quantities follow the dosage, as on the server.
+  // Live preview. Admixture quantities are the ones typed (legacy rule); the dosage only suggests one.
   const binder = cementitious(form.materials)
-  const liveInput = Object.fromEntries(MATERIALS.map((m) => [m, { ...form.materials[m] }]))
-  for (const [slot, dose] of [['admixture_1', form.dosage_1], ['admixture_2', form.dosage_2]] as const) {
-    liveInput[slot].ssd = n(dose) === null ? '' : String(admixtureQty(binder, dose))
-  }
-  const live = mix(liveInput, form.batch_size)
+  const live = mix(form.materials, form.batch_size)
   const fromServer = !dirty && !!trial.results?.mix
   const server = fromServer ? serverLines(trial) : null
   const lines = Object.fromEntries(live.lines.map((l) => [l.material, server?.[l.material] ?? l]))
@@ -116,6 +141,12 @@ export function MixStep({ readOnly, banners }: { readOnly: boolean; banners: Rea
             options={productOptions(form.admixture_1, trial.admixture_1)} disabled={readOnly} invalid={!!err('admixture_1')}
             onChange={(v) => set('admixture_1', v === null ? '' : String(v))} />
         </Field>
+        {!readOnly && hasRole('AD', 'CT') ? (
+          <Pressable accessibilityRole="button" accessibilityHint="Opens a new recipe prefilled from this project, then comes back here"
+            onPress={() => { void newFormulation() }} style={{ minHeight: TOUCH, justifyContent: 'center', alignSelf: 'flex-start' }}>
+            <Text style={{ fontFamily: font.semibold, fontSize: 15, color: color.link }}>New formulation</Text>
+          </Pressable>
+        ) : null}
         <View style={{ flexDirection: 'row', gap: 10 }}>
           <View style={{ flex: 1 }}>
             <Field label="Dosage" error={err('dosage_1')}>
@@ -153,6 +184,7 @@ export function MixStep({ readOnly, banners }: { readOnly: boolean; banners: Rea
             <Text style={{ fontFamily: font.semibold, fontSize: 15, color: color.link }}>Add a second product</Text>
           </Pressable>
         ) : null}
+        <WarnText items={[warns.dosage_1, warns.batch_size, warns.dosage_2]} />
         <View style={{ flexDirection: 'row', gap: 10 }}>
           <Output label="Free W/C" value={totals.freeWc !== null ? f2(n(totals.freeWc)) : '–'}
             hint={waterSsd !== null && binder ? `Water ${num(waterSsd)} ÷ binder ${num(binder)}` : 'Enter water and binders'} />
@@ -178,7 +210,9 @@ export function MixStep({ readOnly, banners }: { readOnly: boolean; banners: Rea
           const name = admix ? (product || MATERIAL_LABEL[m]) : m === 'cement' && entry.cement_type ? `Cement, ${entry.cement_type}` : MATERIAL_LABEL[m]
           const expanded = open === m
           const cat = sourceCategory(m)
-          const unused = BINDERS.includes(m) && m !== 'cement' && !n(entry.ssd)
+          const unused = (BINDERS.includes(m) || OTHER_MINERALS.includes(m)) && m !== 'cement' && !n(entry.ssd)
+          const dose = m === 'admixture_1' ? form.dosage_1 : m === 'admixture_2' ? form.dosage_2 : ''
+          const suggested = admix && n(dose) !== null && binder ? admixtureQty(binder, dose) : null
           return (
             <View key={m} style={{ borderTopWidth: 1, borderColor: color.divider, backgroundColor: expanded ? color.head : color.surface }}>
               <Pressable accessibilityRole="button" accessibilityState={{ expanded }}
@@ -200,12 +234,20 @@ export function MixStep({ readOnly, banners }: { readOnly: boolean; banners: Rea
               {expanded && (
                 <View style={{ paddingHorizontal: 12, paddingBottom: 12, gap: 10 }}>
                   {admix ? (
-                    <Small>{product ? `${f2(l.ssd)} kg/m³ from the dosage, as a percentage of the binder.` : 'Choose a product and dosage above.'}</Small>
+                    <>
+                      <Labeled label="Quantity, kg/m³">
+                        <CellInput accessibilityLabel={`${name} quantity, kilograms per cubic metre`} value={entry.ssd} editable={!readOnly}
+                          invalid={outOfRange(entry.ssd, LIMITS.ssd)} warn={!!warns[`materials.${m}.ssd`]} onChangeText={(v) => setMat(m, 'ssd', v)} />
+                      </Labeled>
+                      <Small>{!product ? 'Choose a product above, then enter the quantity used.'
+                        : suggested !== null ? `The dosage gives ${f2(suggested)} kg/m³ (dosage % of the binder). Enter the quantity used.`
+                          : 'Enter the quantity used. A dosage above suggests one.'}</Small>
+                    </>
                   ) : (
                     <View style={{ flexDirection: 'row', gap: 8 }}>
                       <Labeled label="SSD design, kg">
                         <CellInput accessibilityLabel={`${MATERIAL_LABEL[m]} SSD design, kilograms per cubic metre`} value={entry.ssd} editable={!readOnly}
-                          invalid={outOfRange(entry.ssd, LIMITS.ssd)} onChangeText={(v) => setMat(m, 'ssd', v)} />
+                          invalid={outOfRange(entry.ssd, LIMITS.ssd)} warn={!!warns[`materials.${m}.ssd`]} onChangeText={(v) => setMat(m, 'ssd', v)} />
                       </Labeled>
                       {agg && (
                         <>
@@ -232,7 +274,7 @@ export function MixStep({ readOnly, banners }: { readOnly: boolean; banners: Rea
                     <Field label="Source">
                       <Picker label={`${MATERIAL_LABEL[m]} source`} placeholder="Select source" value={entry.source || null} disabled={readOnly}
                         options={withCurrent((lists[cat].data ?? []).map((o) => ({ value: o.value, label: o.value })), entry.source)}
-                        onChange={(v) => setMat(m, 'source', v ?? '')} />
+                        onChange={(v) => setSource(m, v ?? '')} />
                     </Field>
                   )}
                   {m === 'cement' && (
@@ -259,6 +301,7 @@ export function MixStep({ readOnly, banners }: { readOnly: boolean; banners: Rea
         <View style={{ paddingTop: 4 }}><SourceNote fromServer={fromServer} /></View>
       </Section>
       {err('materials') ? <Banner tone="error">{err('materials')}</Banner> : null}
+      <WarnText items={Object.entries(warns).filter(([k]) => k.startsWith('materials.')).map(([, w]) => w)} />
       {!dirty && mixWarnings(trial).length ? <Banner tone="warn">{mixWarnings(trial).join(' ')}</Banner> : null}
     </Screen>
   )

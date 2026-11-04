@@ -60,3 +60,21 @@ describe('recipe', () => {
     expect(withBalance({ J101: 80, J401: 30 }).errors[0]).toMatch('over 100%')
   })
 })
+
+describe('legacy parity', () => {
+  it('default sieve sets give all eight combined grading points', async () => {
+    const { SIEVE_SETS } = jest.requireActual<typeof import('./calc')>('./calc')
+    const weights: Record<string, number[]> = {
+      '20mm': [0, 3600, 1300, 100, 0, 0, 0, 0, 0], '10mm': [0, 150, 2700, 120, 30, 0, 0, 0, 0],
+      crushed_sand: [0, 0, 30, 160, 220, 180, 190, 120, 70, 30],
+    }
+    const passing = Object.fromEntries(Object.entries(weights).map(([m, w]) => [m, passingMap(analyse(SIEVE_SETS[m].map((sieve, i) => ({ sieve, retained: w[i] }))))]))
+    expect(combine({ '20mm': 35, '10mm': 25, crushed_sand: 40 }, passing).points).toHaveLength(8)
+  })
+  it('fiber is a material outside W/C and cementitious, with no correction', () => {
+    const r = mix({ ...PALAVA, fiber: { ssd: '0.9' } }, '0.04')
+    const fiber = r.lines.find((l) => l.material === 'fiber')!
+    expect([fiber.adjusted, fiber.batch, r.freeWc]).toEqual([0.9, 0.04, 0.38])
+    expect(cementitious({ ...PALAVA, fiber: { ssd: '0.9' } })).toBe(420)
+  })
+})

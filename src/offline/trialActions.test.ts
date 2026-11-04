@@ -8,7 +8,7 @@ import { resetConnectivity, setNetwork } from './connectivity'
 import { bindQueryClient, outbox } from './outbox'
 import { trialView } from './overlay'
 import { fileKeeper, offlineStorage } from './storage'
-import { CLOSE_OFFLINE, CLOSE_WAITING, createTrial, queueFiles, readyToClose, saveCubes, saveTrialPatch, startTrial } from './trialActions'
+import { CLOSE_OFFLINE, CLOSE_WAITING, createTrial, queueFiles, readyToClose, saveCubes, saveTrialPatch, STARTED_READ_ONLY, startTrial } from './trialActions'
 
 const mockApi = jest.fn()
 jest.mock('@/api/client', () => ({
@@ -57,6 +57,21 @@ beforeEach(async () => {
 
 const goOffline = () => setNetwork({ isConnected: false, isInternetReachable: false })
 
+/** Everything the legacy Create Trial form required (server completeness), as step PATCH bodies. */
+const COMPLETE = {
+  sieves: {
+    '20mm': [{ sieve: '20', retained: '100' }], '10mm': [{ sieve: '10', retained: '50' }], river_sand: [{ sieve: '4.75', retained: '20' }], crushed_sand: [],
+  },
+  proportions: { '20mm': '40', '10mm': '20', river_sand: '40', crushed_sand: '0' },
+  cast_at: '2026-11-04T10:00:00+05:30', batch_size: '0.04', admixture_1: 9, dosage_1: '0.8', grade_of_concrete: 4,
+  materials: {
+    cement: { ssd: '300', source: 'UltraTech', cement_type: 'OPC 53' }, water: { ssd: '160' },
+    '20mm': { ssd: '546', source: 'Quarry A' }, river_sand: { ssd: '700', source: 'Local' },
+  },
+  fresh_readings: { 0: '180' }, site_temp: '31', fresh_density: '2400', bleeding: 2,
+  signatory_rd: 'R. Patil', signatory_site_qc: 'S. Rao', signatory_sales: 'A. Shah',
+}
+
 describe('online', () => {
   it('saves straight to the server and queues nothing', async () => {
     mockApi.mockResolvedValueOnce({ id: 't1', remarks: 'ok' })
@@ -97,7 +112,7 @@ describe('offline', () => {
     const { trial, queued } = await createTrial(qc, project)
     expect(queued).toBe(true)
     expect(trial).toMatchObject({ project: 'p1', project_name: 'Palava towers', status: 'draft' })
-    await saveTrialPatch(qc, trial.id, { cast_at: '2026-11-04T10:00:00+05:30', batch_size: '0.04' }, 'Mix design')
+    await saveTrialPatch(qc, trial.id, COMPLETE, 'Mix design')
     const started = await startTrial(qc, { ...trial, cast_at: '2026-11-04T10:00:00+05:30' })
     expect(started.trial.status).toBe('in_progress')
     await saveCubes(qc, trial.id, '1d', { cubes: [{ weight: '8.4', load: '280' }] })
@@ -119,6 +134,51 @@ describe('offline', () => {
     goOffline()
     const { trial } = await createTrial(qc, project)
     await expect(startTrial(qc, trial)).rejects.toMatchObject({ fields: { cast_at: [expect.stringContaining('trial date')] } })
+  })
+
+  it('stops an incomplete start before queuing it, listing what is missing (legacy Create Trial rules)', async () => {
+    goOffline()
+    const { trial } = await createTrial(qc, project)
+    const { site_temp: _t, bleeding: _b, signatory_sales: _s, ...rest } = COMPLETE
+    await saveTrialPatch(qc, trial.id, rest)
+    await expect(startTrial(qc, trial)).rejects.toMatchObject({
+      status: 400,
+      fields: { site_temp: ['Site temperature is required.'], bleeding: ['Bleeding is required.'], signatory_sales: ['For Thermax Sales Person is required.'] },
+    })
+    expect(outbox.getSnapshot().map((o) => o.kind)).toEqual(['create_trial', 'patch_trial'])
+  })
+
+  it('never queues a step edit on a started trial; cubes and files still queue', async () => {
+    goOffline()
+    const { trial } = await createTrial(qc, project)
+    await saveTrialPatch(qc, trial.id, COMPLETE)
+    await startTrial(qc, trial)
+    await expect(saveTrialPatch(qc, trial.id, { remarks: 'late' })).rejects.toMatchObject({ status: 409, code: 'not_allowed', message: STARTED_READ_ONLY })
+    await saveCubes(qc, trial.id, '1d', { cubes: [{ weight: '8.4', load: '280' }], tested_on: '2026-11-05' })
+    expect(outbox.getSnapshot().map((o) => o.kind)).toEqual(['create_trial', 'patch_trial', 'start_trial', 'put_cubes'])
+    const view = trialView(undefined, outbox.forTrial(trial.id))!
+    expect(view.actions.edit).toBe(false)
+    expect(view.cube_sets[0]).toMatchObject({ age: '1d', tested_on: '2026-11-05' })
+  })
+
+  it('refuses a step edit on a trial the server says is in progress, without sending it', async () => {
+    qc.setQueryData(['trial', 't5'], { id: 't5', status: 'in_progress', actions: {} })
+    await expect(saveTrialPatch(qc, 't5', { batch_size: '0.05' })).rejects.toMatchObject({ status: 409 })
+    expect(mockApi).not.toHaveBeenCalled()
+    expect(outbox.getSnapshot()).toEqual([])
+  })
+
+  it('uploads a queued file with its reading time', async () => {
+    goOffline()
+    await queueFiles('t9', [{ uri: 'file:///cache/x.heic', name: 'IMG_1.HEIC', type: 'image/heic', size: 1200 }], '60')
+    const [op] = outbox.getSnapshot()
+    expect(op).toMatchObject({ kind: 'upload_attachment', reading: '60' })
+    resetConnectivity()
+    mockApi.mockResolvedValueOnce({ id: 32, original_name: 'IMG_1.HEIC', reading: '60' })
+    qc.setQueryData(['trial', 't9'], { id: 't9', attachments: [] })
+    await outbox.flush()
+    const [, opts] = mockApi.mock.calls[0]
+    expect((opts.form as FormData).get('reading')).toBe('60')
   })
 
   it('keeps photos in the app and uploads them with a client_id when back online', async () => {

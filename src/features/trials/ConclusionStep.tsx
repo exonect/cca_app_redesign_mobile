@@ -15,13 +15,15 @@ import { kick, outbox, useInFlight, useTrialOps } from '@/offline/outbox'
 import type { Op } from '@/offline/queue'
 import { queueFiles, readyToClose } from '@/offline/trialActions'
 import type { Outcome, Trial } from '@/shared/types'
-import { Banner, Button, Field, OutcomeChip, Screen, Small, TextField } from '@/ui/kit'
+import { Banner, Button, Field, OutcomeChip, Picker, Screen, Small, TextField } from '@/ui/kit'
 import { color, font, radius, TOUCH } from '@/ui/theme'
 
 import { extOf, MIME, photoName, planUploads, type PickedFile } from './attachments'
 import { downloadAndShare } from './download'
 import { date, fileSize, shortDate } from './format'
-import { conclusionForm, conclusionPayload, conclusionProblems, LIMITS, SIGNATORIES, SIGNATORY_MAX, splitWarnings, type ConclusionForm } from './forms'
+import {
+  conclusionForm, conclusionPayload, conclusionProblems, LIMITS, READING_MINUTES, readingLabel, SIGNATORIES, SIGNATORY_MAX, splitWarnings, type ConclusionForm,
+} from './forms'
 import { RadioCard, Section, StepFooter } from './parts'
 import { SignaturePad } from './SignaturePad'
 import { queuedNote, savedNotice, useReloadTrial, useStepForm, useWorkspace } from './workspace'
@@ -36,6 +38,9 @@ export function ConclusionStep({ readOnly, banners }: { readOnly: boolean; banne
   const [outcomeError, setOutcomeError] = useState<string | null>(null)
   const [drawing, setDrawing] = useState(false)
   const closing = trial.actions.close
+  // Legacy "Update Cube": an Admin or Sales Admin can change the conclusion and remarks of a closed trial.
+  const [revising, setRevising] = useState(false)
+  const choosing = closing || revising
   const online = useOnline()
   const synced = useTrialOps(trial.id).length === 0
 
@@ -68,12 +73,24 @@ export function ConclusionStep({ readOnly, banners }: { readOnly: boolean; banne
       notify({ tone: 'error', text: msg })
       return
     }
+    if (form.remarks.trim().length > REMARKS_MAX) { notify({ tone: 'error', text: `Remarks: use ${REMARKS_MAX} characters or fewer.` }); return }
     closingNow.current = true
     try {
       if (!confirmed && !(await saveAll())) return
       // Close is online only: it needs the server's checks and warnings, after this phone's changes have synced.
       const blocked = await readyToClose(trial.id)
       if (blocked) { notify({ tone: 'error', text: blocked }); return }
+      if (!confirmed) {
+        // Legacy: closing always asks first, listing anything not measured yet.
+        const warnings = check.data?.warnings ?? []
+        const what = outcome === 'met' ? 'met expectation' : 'below expectation'
+        Alert.alert(warnings.length ? 'Close the trial anyway?' : 'Close this trial?',
+          warnings.length
+            ? `The conclusion will rest on the results entered so far:\n\n${warnings.map((w) => `• ${w}`).join('\n')}\n\nAn Admin or Sales Admin can still add cube results after closing.`
+            : `Close ${trial.project_name}, trial ${trial.code ?? ''}, as ${what}? An Admin or Sales Admin can still add cube results after closing.`,
+          [{ text: 'Keep it open', style: 'cancel' }, { text: 'Close trial', style: 'destructive', onPress: () => { void closeTrial(true) } }])
+        return
+      }
       const t = await close.mutateAsync(confirmed)
       accept(t)
       notify({ tone: 'ok', text: `Trial closed. ${t.code ?? ''}, ${t.outcome_label.toLowerCase()}.`.replace(' ,', ',') })
@@ -94,15 +111,41 @@ export function ConclusionStep({ readOnly, banners }: { readOnly: boolean; banne
     }
   }
 
+  const revise = useMutation({
+    mutationFn: () => api<Trial>(`/trials/${trial.id}/conclusion/`, { body: { outcome, remarks: form.remarks } }),
+  })
+  async function saveConclusion() {
+    setOutcomeError(null)
+    if (!outcome) { setOutcomeError('Choose met or below expectation.'); return }
+    if (form.remarks.trim().length > REMARKS_MAX) { notify({ tone: 'error', text: `Remarks: use ${REMARKS_MAX} characters or fewer.` }); return }
+    if (!online) { notify({ tone: 'error', text: 'Changing the conclusion needs a connection. Try again when you are back online.' }); return }
+    try {
+      const t = await revise.mutateAsync()
+      accept(t)
+      setRevising(false)
+      notify({ tone: 'ok', text: `Conclusion changed to ${t.outcome_label.toLowerCase()}.` })
+    } catch (e) {
+      const f = fieldErrors(e)
+      if (f.outcome) setOutcomeError(f.outcome)
+      notify({ tone: 'error', text: f.outcome ?? errorMessage(e, 'The conclusion was not changed. Try again.') })
+      reload(e)
+    }
+  }
+  const cancelRevise = () => { setRevising(false); setOutcome(trial.outcome); setOutcomeError(null); setForm((f) => ({ ...f, remarks: trial.remarks ?? '' })) }
+
   const salesPerson = project?.sales_person?.name
-  const footer = trial.actions.start ? (
+  const footer = revising ? (
+    <StepFooter note="Saved with the remarks. The project timeline records the change.">
+      <Button title="Cancel" onPress={cancelRevise} style={{ flex: 1 }} />
+      <Button variant="primary" title="Save conclusion" onPress={() => { void saveConclusion() }} busy={revise.isPending} style={{ flex: 1.4 }} />
+    </StepFooter>
+  ) : trial.actions.start ? (
     <StepFooter><Button variant="primary" title="Start trial" onPress={startTrial} busy={starting} style={{ flex: 1 }} /></StepFooter>
   ) : closing ? (
     <StepFooter note={online
       ? 'Locks the trial and moves the project to Trials closed if this is the last open trial.'
       : 'Closing needs a connection. Everything else on this trial can be saved offline.'}>
-      <Button title="Save" onPress={async () => { if (await saveAll()) notify(savedNotice(trial.id, 'Conclusion saved')) }} disabled={!dirty} busy={saving && !close.isPending} style={{ flex: 1 }} />
-      <Button variant="primary" title="Close trial" onPress={() => { void closeTrial(false) }} busy={close.isPending} disabled={saving} style={{ flex: 1.4 }} />
+      <Button variant="primary" title="Close trial" onPress={() => { void closeTrial(false) }} busy={close.isPending} disabled={saving} style={{ flex: 1 }} />
     </StepFooter>
   ) : !readOnly ? (
     <StepFooter><Button title="Save" onPress={async () => { if (await saveAll()) notify(savedNotice(trial.id, 'Conclusion saved')) }} disabled={!dirty} busy={saving} style={{ flex: 1 }} /></StepFooter>
@@ -140,20 +183,23 @@ export function ConclusionStep({ readOnly, banners }: { readOnly: boolean; banne
         <Banner tone="warn">{`Before you close: ${check.data.warnings.join(' ')}`}</Banner>
       ) : null}
 
-      {trial.status === 'closed' ? (
+      {trial.status === 'closed' && !revising ? (
         <Section title="Trial conclusion">
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
             <OutcomeChip outcome={trial.outcome} />
             <Small>Closed {date(trial.closed_at)}</Small>
           </View>
+          {trial.actions.change_conclusion ? (
+            <Button title="Change conclusion" onPress={() => { setOutcome(trial.outcome); setRevising(true) }} style={{ alignSelf: 'flex-start', flexGrow: 0 }} />
+          ) : null}
         </Section>
       ) : (
         <View accessibilityRole="radiogroup" accessibilityLabel="Trial conclusion, required" style={{ gap: 8 }}>
           <Text style={{ fontFamily: font.semibold, fontSize: 15, color: color.ink }}>Trial conclusion</Text>
           <View style={{ flexDirection: 'row', gap: 10 }}>
-            <RadioCard title="Met expectation" body="Can be offered to the customer." selected={outcome === 'met'} disabled={!closing}
+            <RadioCard title="Met expectation" body="Can be offered to the customer." selected={outcome === 'met'} disabled={!choosing}
               invalid={!!outcomeError} onPress={() => { setOutcome('met'); setOutcomeError(null) }} />
-            <RadioCard title="Below expectation" body="Say what was missed in the remarks." selected={outcome === 'below'} disabled={!closing}
+            <RadioCard title="Below expectation" body="Say what was missed in the remarks." selected={outcome === 'below'} disabled={!choosing}
               invalid={!!outcomeError} onPress={() => { setOutcome('below'); setOutcomeError(null) }} />
           </View>
           {outcomeError ? <Text accessibilityLiveRegion="polite" style={{ fontFamily: font.regular, fontSize: 13, color: color.error }}>{outcomeError}</Text> : null}
@@ -162,7 +208,7 @@ export function ConclusionStep({ readOnly, banners }: { readOnly: boolean; banne
       )}
 
       <Field label="Remarks" error={errors.remarks} hint={`${form.remarks.length} of ${REMARKS_MAX} characters`}>
-        <TextField accessibilityLabel="Remarks" multiline numberOfLines={3} maxLength={REMARKS_MAX} value={form.remarks} editable={!readOnly}
+        <TextField accessibilityLabel="Remarks" multiline numberOfLines={3} maxLength={REMARKS_MAX} value={form.remarks} editable={!readOnly || closing || revising}
           invalid={!!errors.remarks} onChangeText={(v) => setForm((f) => ({ ...f, remarks: v }))}
           style={{ minHeight: 72, textAlignVertical: 'top', fontFamily: font.regular }} />
       </Field>
@@ -170,8 +216,8 @@ export function ConclusionStep({ readOnly, banners }: { readOnly: boolean; banne
       <Section title="Signatures">
         {SIGNATORIES.map((s) => (
           <View key={s.name} style={{ gap: 8, paddingBottom: 6 }}>
-            <Field label={s.label} error={errors[s.name]} hint={s.name === 'signatory_sales' && salesPerson ? 'From the project; change it if someone else signs.' : undefined}>
-              <TextField accessibilityLabel={`${s.label}, name`} placeholder="Name" value={form[s.name]} editable={!readOnly} invalid={!!errors[s.name]} maxLength={SIGNATORY_MAX}
+            <Field label={s.label} error={errors[s.name]} hint={s.name === 'signatory_sales' ? `The project's Sales Person${salesPerson ? '' : ' (none set)'}; not editable, as in the old app.` : undefined}>
+              <TextField accessibilityLabel={`${s.label}, name`} placeholder="Name" value={form[s.name]} editable={!readOnly && s.name !== 'signatory_sales'} invalid={!!errors[s.name]} maxLength={SIGNATORY_MAX}
                 onChangeText={(v) => setForm((f) => ({ ...f, [s.name]: v }))} />
             </Field>
             <SignaturePad label={form[s.name] || s.label} value={form[s.sign]} disabled={readOnly} onDrawing={setDrawing}
@@ -211,6 +257,8 @@ function Attachments() {
   const [problems, setProblems] = useState<string[]>([])
   const [keeping, setKeeping] = useState(false)
   const [opening, setOpening] = useState<number | null>(null)
+  // Legacy: each photo or video belonged to a reading time of the fresh concrete table.
+  const [reading, setReading] = useState('')
   const canAttach = trial.actions.attach
   const canDelete = trial.actions.edit
   const refresh = () => qc.invalidateQueries({ queryKey: ['trial', trial.id] })
@@ -222,7 +270,7 @@ function Attachments() {
     const { upload: good, problems: skipped } = planUploads(files, trial.attachments.length + waiting.length)
     setKeeping(true)
     try {
-      const failed = await queueFiles(trial.id, good)
+      const failed = await queueFiles(trial.id, good, reading)
       setProblems([...skipped, ...failed])
       const kept = good.length - failed.length
       if (kept) {
@@ -308,7 +356,7 @@ function Attachments() {
             </View>
             <View style={{ flex: 1, minWidth: 0 }}>
               <Text numberOfLines={1} style={{ fontFamily: font.semibold, fontSize: 15, color: color.ink }}>{op.name}</Text>
-              <Small>{op.state === 'failed' ? 'Not uploaded' : sending === op.id ? 'Uploading…' : online ? 'Not synced yet, waiting to upload' : 'Not synced yet, uploads when back online'}</Small>
+              <Small>{op.reading ? `${readingLabel(op.reading)} reading. ` : ''}{op.state === 'failed' ? 'Not uploaded' : sending === op.id ? 'Uploading…' : online ? 'Not synced yet, waiting to upload' : 'Not synced yet, uploads when back online'}</Small>
             </View>
           </View>
           {op.state === 'failed' ? (
@@ -334,7 +382,7 @@ function Attachments() {
               <Pressable accessibilityRole="link" accessibilityLabel={`Open ${a.original_name}`} onPress={() => open(a.id, a.original_name, a.content_type)}
                 disabled={opening === a.id} style={{ flex: 1, minWidth: 0, minHeight: TOUCH, justifyContent: 'center' }}>
                 <Text numberOfLines={1} style={{ fontFamily: font.semibold, fontSize: 15, color: color.link }}>{a.original_name}</Text>
-                <Small>{opening === a.id ? 'Opening…' : `${fileSize(a.size)}, added ${shortDate(a.created_at)} by ${a.uploaded_by}`}</Small>
+                <Small>{opening === a.id ? 'Opening…' : `${a.reading ? `${readingLabel(a.reading)} reading, ` : ''}${fileSize(a.size)}, added ${shortDate(a.created_at)} by ${a.uploaded_by}`}</Small>
               </Pressable>
               {canDelete && (
                 <Pressable accessibilityRole="button" accessibilityLabel={`Remove ${a.original_name}`} onPress={() => confirmRemove(a.id, a.original_name)}
@@ -349,12 +397,19 @@ function Attachments() {
           )
         })}
       {canAttach && (
+        <Field label="Reading time" hint="The fresh concrete reading the next photos or files belong to.">
+          <Picker label="Reading time" placeholder="Not tied to a reading" value={reading || null} disabled={keeping}
+            options={[{ value: '', label: 'Not tied to a reading' }, ...READING_MINUTES.map((m) => ({ value: m, label: readingLabel(m) }))]}
+            onChange={(v) => setReading(v ?? '')} />
+        </Field>
+      )}
+      {canAttach && (
         <View style={{ flexDirection: 'row', gap: 10 }}>
           <IconButton label="Take photo" icon="camera" onPress={takePhoto} disabled={keeping} />
           <IconButton label="Choose file" icon="file" onPress={chooseFile} disabled={keeping} />
         </View>
       )}
-      {canAttach ? <Small>PDF, JPG, PNG, XLSX or MP4, up to 25 MB each and 30 files per trial. Photos taken offline upload when you are back online.</Small> : null}
+      {canAttach ? <Small>PDF, photos (JPG, PNG, HEIC, WEBP, GIF), XLSX or MP4, up to 25 MB each and 30 files per trial. Photos taken offline upload when you are back online.</Small> : null}
     </Section>
   )
 }

@@ -45,7 +45,7 @@ export function sendOp(op: OpInput): Promise<unknown> {
       const uri = keptUri(op.uri)
       if (!fileExists(uri)) return Promise.reject(new PermanentError(`${op.name} is no longer on this phone. Discard it and add the file again.`))
       return api<Attachment>(`/trials/${op.trialId}/attachments/`, {
-        form: attachmentForm({ uri, name: op.name, type: op.type }, op.clientId), timeoutMs: UPLOAD_TIMEOUT_MS,
+        form: attachmentForm({ uri, name: op.name, type: op.type }, op.clientId, op.reading), timeoutMs: UPLOAD_TIMEOUT_MS,
       })
     }
   }

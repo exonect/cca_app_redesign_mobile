@@ -37,7 +37,8 @@ describe('trial view', () => {
   it('shows a queued start as in progress, still without a number', () => {
     const t = trialView(server({ cast_at: '2026-11-03T10:00:00+05:30' }), [{ ...base, id: 's', kind: 'start_trial', trialId: 't1' }])!
     expect(t).toMatchObject({ status: 'in_progress', code: null })
-    expect(t.actions).toMatchObject({ start: false, close: true, edit: true })
+    // Steps are read only once started (legacy edit rule); close stays open.
+    expect(t.actions).toMatchObject({ start: false, close: true, edit: false })
   })
 
   it('clears a choice', () => {

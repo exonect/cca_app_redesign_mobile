@@ -16,6 +16,7 @@ import { Banner, Body, Button, Card, Chips, ErrorState, Field, H1, Loading, Numb
 import { color, font, radius, TOUCH } from '@/ui/theme'
 
 import { FlagBanner } from '@/features/flags/FlagBanner'
+import { pickNewFormulation } from '@/features/trials/newFormulation'
 import { date } from '@/features/projects/format'
 import { ConfirmSheet } from '@/features/projects/Sheet'
 import { goBack } from '@/features/projects/TabHeader'
@@ -23,7 +24,9 @@ import { goBack } from '@/features/projects/TabHeader'
 import { compositionOf, FAMILY_OPTIONS, preview, rowProblem, rowsOf, STATUS_OPTIONS, type Row } from './balance'
 import { CompositionView, RecipeStatusChip } from './parts'
 
-export function RecipeScreen({ id }: { id: string }) {
+/** forTrial and prefill: legacy "New Formulation" from a trial's mix step (prefilled from the
+ * project; on save the new recipe goes back to that trial as its product). */
+export function RecipeScreen({ id, forTrial, prefill }: { id: string; forTrial?: string; prefill?: RecipePrefill }) {
   const isNew = id === 'new'
   const { hasRole } = useAuth()
   // edit: change this recipe; version: a new version prefilled from it (a locked recipe cannot be changed).
@@ -38,7 +41,7 @@ export function RecipeScreen({ id }: { id: string }) {
     return <Shell title="Recipe">{q.isError ? <ErrorState error={q.error} onRetry={() => q.refetch()} /> : <Loading label="Loading recipe" />}</Shell>
   }
   if (mode === 'version' && q.data) return <RecipeForm recipe={null} template={q.data} onDone={() => setMode('view')} />
-  if (mode === 'edit') return <RecipeForm recipe={q.data ?? null} onDone={() => setMode('view')} />
+  if (mode === 'edit') return <RecipeForm recipe={q.data ?? null} onDone={() => setMode('view')} {...(isNew ? { forTrial, prefill } : {})} />
   return <RecipeDetail recipe={q.data!} canEdit={canEdit} onEdit={() => setMode('edit')} onNewVersion={() => setMode('version')} />
 }
 
@@ -151,7 +154,11 @@ const BLANK: Form = { family: '', product_name: '', sfdc_no: '', location: '', c
 /** recipe: edit it. recipe null: a new recipe, or with template a new version
  * prefilled from that recipe (same product name and composition, saved
  * through POST with the new version confirmation). */
-export function RecipeForm({ recipe, template, onDone }: { recipe: Recipe | null; template?: Recipe; onDone: () => void }) {
+export type RecipePrefill = { sfdc_no?: string; customer_name?: string; project_name?: string }
+
+export function RecipeForm({ recipe, template, onDone, forTrial, prefill }: {
+  recipe: Recipe | null; template?: Recipe; onDone: () => void; forTrial?: string; prefill?: RecipePrefill
+}) {
   const isNew = recipe === null
   const source = recipe ?? template ?? null
   // SFDC number and family are part of the formulation name: fixed once it exists (legacy edit form).
@@ -162,7 +169,7 @@ export function RecipeForm({ recipe, template, onDone }: { recipe: Recipe | null
   const [initial] = useState<Form>(() => source ? {
     family: source.family === 'other' && !recipe ? '' : source.family, product_name: source.product_name, sfdc_no: source.sfdc_no, location: String(source.location),
     customer_name: source.customer_name, project_name: source.project_name, status: source.status,
-  } : BLANK)
+  } : { ...BLANK, ...Object.fromEntries(Object.entries(prefill ?? {}).filter(([, x]) => x)) })
   const [v, setV] = useState<Form>(initial)
   const [errors, setErrors] = useState<Partial<Record<FormKey, string>>>({})
   const [initialRows] = useState<Row[]>(() => (source ? rowsOf(source.components) : []))
@@ -194,6 +201,8 @@ export function RecipeForm({ recipe, template, onDone }: { recipe: Recipe | null
       void qc.invalidateQueries({ queryKey: ['recipes'] })
       qc.setQueryData(['recipe', String(saved.id)], saved)
       setLeaving(true)
+      // New formulation from a trial: back to the trial, which takes the new recipe as its product.
+      if (isNew && forTrial) { pickNewFormulation(forTrial, saved.id); allowLeave(); router.back(); return }
       // A changed set of raw materials saves a new formulation: open it (the edited recipe is unchanged).
       if (isNew || saved.id !== recipe.id) { allowLeave(); router.replace(`/recipes/${saved.id}`) } else onDone()
     },

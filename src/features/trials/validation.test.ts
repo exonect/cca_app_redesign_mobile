@@ -1,13 +1,14 @@
 // Client checks on the trial steps, mirroring the server's TrialWriteSerializer
 // and save_cubes rules (and stopping text the server would silently drop).
-import type { Trial } from '@/shared/types'
+import type { Lookup, Trial } from '@/shared/types'
 
 import { planUploads } from './attachments'
 import { CAST_ERRORS, castParts, isFutureDay } from './castAt'
 import {
-  conclusionForm, conclusionProblems, cubeProblem, decimalProblem, decimalTotal, freshForm, freshProblems, mixForm, mixProblems,
-  SIGNATURE_MAX_CHARS, sieveForm, sieveProblems,
+  conclusionForm, conclusionProblems, cubePayload, cubeProblem, cubeSoftWarnings, decimalProblem, decimalTotal, freshForm, freshPayload, freshProblems,
+  freshSoftWarnings, mixForm, mixProblems, mixSoftWarnings, sccNumber, SIGNATURE_MAX_CHARS, sieveForm, sieveProblems, testedOnDefault, testedOnIso,
 } from './forms'
+import { sccOptions } from './FreshStep'
 import { mixWarnings } from './MixStep'
 
 jest.mock('@/api/client', () => ({ api: jest.fn(), ApiError: class extends Error {}, fieldErrors: () => ({}), session: {} }))
@@ -23,11 +24,11 @@ describe('sieve analysis', () => {
   it('blocks text and negative retained weights, allows blanks', () => {
     const f = sieveForm(trial)
     expect(sieveProblems(f)).toEqual({})
-    f.sieves.river_sand[2].retained = '12..5'
+    f.sieves.river_sand[4].retained = '12..5'
     expect(sieveProblems(f).sieves).toBe('Enter retained weights as numbers of 0 or more. Check River sand on 1.18 mm.')
-    f.sieves.river_sand[2].retained = '-3'
+    f.sieves.river_sand[4].retained = '-3'
     expect(sieveProblems(f).sieves).toMatch('River sand on 1.18 mm')
-    f.sieves.river_sand[2].retained = '12.5'
+    f.sieves.river_sand[4].retained = '12.5'
     expect(sieveProblems(f)).toEqual({})
   })
 
@@ -39,12 +40,18 @@ describe('sieve analysis', () => {
 })
 
 describe('mix design', () => {
-  it('checks dosage and batch size like the server fields', () => {
-    const f = { ...mixForm(trial), dosage_1: '10.5', dosage_2: '0.125', batch_size: '0' }
+  it('checks dosage (hard 0 to 99.99) and batch size (0 or more) like the server fields', () => {
+    const f = { ...mixForm(trial), admixture_1: '7', admixture_2: '8', dosage_1: '100', dosage_2: '0.125', batch_size: '-1' }
     const e = mixProblems(f)
-    expect(e.dosage_1).toBe('Enter the dosage from 0 to 10.')
+    expect(e.dosage_1).toBe('Enter the dosage from 0 to 99.99.')
     expect(e.dosage_2).toBe('Enter the second dosage with up to 2 decimal places.')
-    expect(e.batch_size).toBe('Enter the batch size more than 0.')
+    expect(e.batch_size).toBe('Enter the batch size from 0 up.')
+    // The legacy app saved a 22% dosage and a 0 batch size: no hard error, the dosage gets an amber warning.
+    expect(mixProblems({ ...f, dosage_1: '22', dosage_2: '', batch_size: '0' })).toEqual({})
+    expect(mixSoftWarnings({ ...f, dosage_1: '22', dosage_2: '', batch_size: '0.8' })).toEqual({
+      dosage_1: 'Dosage of admixture I 22% is above the usual 10%. Check it. Saved as entered.',
+      batch_size: 'Batch size 0.8 m³ is above the usual 0.5 m³. Check it. Saved as entered.',
+    })
     expect(mixProblems({ ...f, admixture_1: '7', dosage_1: '0.8', dosage_2: '', batch_size: '0.035' })).toEqual({})
     expect(mixProblems({ ...f, dosage_1: '', dosage_2: '', batch_size: '1000' }).batch_size).toMatch('at most 3 digits before the decimal point')
   })
@@ -62,7 +69,7 @@ describe('mix design', () => {
 })
 
 describe('fresh concrete', () => {
-  it('needs readings of 0 or more and a density from 1000 to 3000 with 1 decimal', () => {
+  it('needs readings of 0 or more and a density of 0 or more with 1 decimal; 1000 to 3000 is soft', () => {
     const f = freshForm(trial)
     f.readings['120'] = '-5'
     f.fresh_density = '2450.25'
@@ -70,7 +77,43 @@ describe('fresh concrete', () => {
       fresh_readings: 'Enter readings in mm as numbers of 0 or more. Check 120 min.',
       fresh_density: 'Enter the density with up to 1 decimal place.',
     })
-    expect(freshProblems({ ...f, readings: { ...f.readings, 120: '150' }, fresh_density: '900' }).fresh_density).toBe('Enter the density from 1000 to 3000.')
+    const legacy = { ...f, readings: { ...f.readings, 120: '150' }, fresh_density: '245' }
+    expect(freshProblems(legacy)).toEqual({})
+    expect(freshSoftWarnings(legacy).fresh_density).toBe('Fresh wet density 245 kg/m³ is below the usual 1000 kg/m³. Check it. Saved as entered.')
+  })
+
+  it('takes the site temperature (0 or more, 2 decimals; above 60 °C is soft)', () => {
+    const f = { ...freshForm(trial), site_temp: '-2' }
+    expect(freshProblems(f).site_temp).toBe('Enter the site temperature from 0 up.')
+    expect(freshProblems({ ...f, site_temp: '32.555' }).site_temp).toBe('Enter the site temperature with up to 2 decimal places.')
+    expect(freshProblems({ ...f, site_temp: '65' })).toEqual({})
+    expect(freshSoftWarnings({ ...f, site_temp: '65' }).site_temp).toBe('Site temperature 65 °C is above the usual 60 °C. Check it. Saved as entered.')
+    expect(freshPayload({ ...f, site_temp: ' 31.5 ' }).site_temp).toBe('31.5')
+  })
+
+  it('keeps SCC tests per reading time and sends only those added (T-54)', () => {
+    const t = { ...trial, scc: { v_funnel: { 0: '9', 30: '11' }, l_box: '0.9' } } as unknown as Trial
+    const f = freshForm(t)
+    expect(f.scc_tests).toEqual(['v_funnel', 'l_box'])
+    expect(f.scc.l_box['0']).toBe('0.9') // an older single value counts as Initial
+    f.scc_tests = [...f.scc_tests, 'u_box']
+    f.scc.u_box['60'] = '78'
+    f.scc.t500['0'] = '4' // not added: not sent
+    expect(freshPayload(f).scc).toEqual({ v_funnel: { 0: '9', 30: '11' }, l_box: { 0: '0.9' }, u_box: { 60: '78' } })
+    f.scc.v_funnel['90'] = 'slow'
+    expect(freshProblems(f).scc).toBe('Enter V funnel readings as numbers from 0 to 100000. Check 90 min.')
+    f.scc.v_funnel['90'] = '75'
+    expect(freshSoftWarnings(f)['scc.v_funnel.90']).toBe('V funnel at 90 min 75 s is above the usual 60 s. Check it. Saved as entered.')
+  })
+
+  it('reads the number of an SCC list value and keeps a stored number not in the list', () => {
+    expect(sccNumber('9 sec')).toBe('9')
+    expect(sccNumber('1.0')).toBe('1')
+    expect(sccNumber('n/a')).toBeNull()
+    const list = [{ id: 1, value: '5 sec' }, { id: 2, value: '9 sec' }] as Lookup[]
+    expect(sccOptions(list, '')).toEqual([{ value: '5', label: '5 sec' }, { value: '9', label: '9 sec' }])
+    expect(sccOptions(list, '7.5')[0]).toEqual({ value: '7.5', label: '7.5' })
+    expect(sccOptions(list, '9.0')).toHaveLength(2)
   })
 })
 
@@ -115,11 +158,11 @@ describe('final server rules for trial steps', () => {
     expect(decimalTotal(['', 'abc'])).toBe('0.00')
   })
 
-  it('caps retained weights at 100000 g', () => {
+  it('caps retained weights at 1000000 kg (garbage only)', () => {
     const f = sieveForm(trial)
-    f.sieves['20mm'][0].retained = '100001'
-    expect(sieveProblems(f).sieves).toMatch(/^Enter retained weights of 100000 g or less\. Check 20 mm on /)
-    f.sieves['20mm'][0].retained = '100000'
+    f.sieves['20mm'][0].retained = '1000001'
+    expect(sieveProblems(f).sieves).toMatch(/^Enter retained weights of 1000000 kg or less\. Check 20 mm on /)
+    f.sieves['20mm'][0].retained = '1000000'
     expect(sieveProblems(f)).toEqual({})
   })
 
@@ -144,10 +187,16 @@ describe('final server rules for trial steps', () => {
     expect(mixProblems({ ...f, admixture_1: '3', admixture_2: '4' })).toEqual({})
   })
 
-  it('checks SSD 0 to 3000, absorption and moisture 0 to 100, and source text up to 100', () => {
+  it('checks SSD 0 to 100000 (3000 soft), absorption and moisture 0 to 100, and source text up to 100', () => {
     const f = mixForm(trial)
-    f.materials.cement = { ...f.materials.cement, ssd: '3000.5' }
-    expect(mixProblems(f).materials).toBe('Enter Cement SSD design from 0 to 3000 kg/m³.')
+    f.materials.cement = { ...f.materials.cement, ssd: '100000.5' }
+    expect(mixProblems(f).materials).toBe('Enter Cement SSD design from 0 to 100000 kg/m³.')
+    f.materials.cement = { ...f.materials.cement, ssd: '3500' }
+    expect(mixProblems(f)).toEqual({})
+    expect(mixSoftWarnings(f)['materials.cement.ssd']).toBe('SSD design of Cement 3500 kg/m³ is above the usual 3000 kg/m³. Check it. Saved as entered.')
+    f.materials.admixture_1 = { ...f.materials.admixture_1, ssd: 'x' }
+    expect(mixProblems(f).materials).toBe('Enter Admixture I SSD design as a number.')
+    f.materials.admixture_1 = { ...f.materials.admixture_1, ssd: '3.4' }
     f.materials.cement = { ...f.materials.cement, ssd: '380' }
     f.materials.river_sand = { ...f.materials.river_sand, absorption: '101' }
     expect(mixProblems(f).materials).toBe('Enter River sand absorption from 0 to 100%.')
@@ -159,19 +208,39 @@ describe('final server rules for trial steps', () => {
     expect(mixProblems(f)).toEqual({})
   })
 
-  it('caps slump and flow readings at 1000 mm', () => {
+  it('caps slump and flow readings at 100000 mm (1000 is soft)', () => {
     const f = freshForm(trial)
+    f.readings['60'] = '100001'
+    expect(freshProblems(f).fresh_readings).toBe('Enter readings of 100000 mm or less. Check 60 min.')
     f.readings['60'] = '1001'
-    expect(freshProblems(f).fresh_readings).toBe('Enter readings of 1000 mm or less. Check 60 min.')
-    f.readings['60'] = '1000'
     expect(freshProblems(f)).toEqual({})
+    expect(freshSoftWarnings(f)['fresh_readings.60']).toBe('Reading at 60 min 1001 mm is above the usual 1000 mm. Check it. Saved as entered.')
   })
 
-  it('checks cube weight 0 to 20 kg, load 0 to 3000 kN and at most 6 cubes', () => {
-    expect(cubeProblem([{ weight: '20.5', load: '700' }])).toBe('Enter a weight of 20 kg or less. Check cube 1.')
-    expect(cubeProblem([{ weight: '8.4', load: '700' }, { weight: '8.4', load: '3001' }])).toBe('Enter a load of 3000 kN or less. Check cube 2.')
-    expect(cubeProblem([{ weight: '20', load: '3000' }])).toBeNull()
+  it('checks cube weight and load 0 to 100000 (20 kg and 3000 kN soft) and at most 6 cubes', () => {
+    expect(cubeProblem([{ weight: '100001', load: '700' }])).toBe('Enter a weight of 100000 kg or less. Check cube 1.')
+    expect(cubeProblem([{ weight: '8.4', load: '700' }, { weight: '8.4', load: '100001' }])).toBe('Enter a load of 100000 kN or less. Check cube 2.')
+    expect(cubeProblem([{ weight: '8500', load: '3200' }])).toBeNull()
+    expect(cubeSoftWarnings([{ weight: '8500', load: '3200' }], '28 days')).toEqual([
+      'Weight of cube 1, 28 days, 8500 kg is far above the 8 to 9 kg of a 150 mm cube. If it was weighed in grams, enter it in kg. Saved as entered.',
+      'Load on cube 1, 28 days, 3200 kN is above the usual 3000 kN. Check it. Saved as entered.',
+    ])
     expect(cubeProblem(Array.from({ length: 7 }, () => ({ weight: '', load: '' })))).toBe('Enter up to 6 cubes.')
+  })
+
+  it('takes the actual test date per age, not in the future and not before the trial date (T-66)', () => {
+    const rows = [{ weight: '8.4', load: '700' }]
+    expect(cubeProblem(rows, '2026-11-05', '2026-10-01T10:00:00+05:30', '2026-11-04')).toBe('The test date cannot be in the future.')
+    expect(cubeProblem(rows, '2026-09-30', '2026-10-01T10:00:00+05:30', '2026-11-04')).toBe('The test date cannot be before the trial date.')
+    expect(cubeProblem(rows, '2026-10-29', '2026-10-01T10:00:00+05:30', '2026-11-04')).toBeNull()
+    expect(testedOnIso('29/10/2026')).toEqual({ iso: '2026-10-29', error: null })
+    expect(testedOnIso('31/02/2026').error).toBe('That date does not exist. Check the day, month and year.')
+    expect(cubePayload(rows, '2026-10-29')).toEqual({ cubes: [{ weight: '8.4', load: '700' }], tested_on: '2026-10-29' })
+    expect(cubePayload(rows)).toEqual({ cubes: [{ weight: '8.4', load: '700' }] })
+    const t = { ...trial, cast_at: '2026-10-01T10:00:00+05:30', cube_sets: [{ age: '7d', tested_on: '2026-10-09' }] } as unknown as Trial
+    expect(testedOnDefault(t, '7d', '2026-11-04')).toBe('2026-10-09') // saved
+    expect(testedOnDefault(t, '28d', '2026-11-04')).toBe('2026-10-29') // due date, already past
+    expect(testedOnDefault(t, '28d', '2026-10-20')).toBe('2026-10-20') // not due yet: today
   })
 
   it('limits trial remarks to 1000 characters after trimming', () => {
@@ -182,6 +251,10 @@ describe('final server rules for trial steps', () => {
 
 describe('attachments', () => {
   const file = (name: string, size = 1000) => ({ uri: `file:///${name}`, name, type: '', size })
+  it('accepts iPhone HEIC and other photo types (T-55)', () => {
+    expect(planUploads([file('IMG_1.HEIC'), file('b.heif'), file('c.webp'), file('d.gif')], 0).problems).toEqual([])
+    expect(planUploads([file('x.exe')], 0).problems).toEqual(['x.exe is not a PDF, photo (JPG, PNG, HEIC, WEBP, GIF), XLSX or MP4 file.'])
+  })
   it('skips empty files and anything over 30 files on the trial', () => {
     expect(planUploads([file('a.pdf', 0)], 0)).toEqual({ upload: [], problems: ['a.pdf is empty.'] })
     const r = planUploads([file('a.pdf'), file('b.png'), file('c.jpg')], 28)

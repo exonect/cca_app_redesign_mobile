@@ -5,10 +5,10 @@
  * Same rules as the web app (src/features/trials/forms.ts there).
  */
 import { AGES, AGGREGATES, MATERIAL_LABEL, MATERIALS, SIEVE_LABEL, SIEVE_SETS } from '@/shared/calc'
-import type { Project, Trial } from '@/shared/types'
+import type { FieldNote, Project, Trial } from '@/shared/types'
 
-import { CAST_ERRORS, castIso, castParts, isFutureDay } from './castAt'
-import { num, shortDate } from './format'
+import { CAST_ERRORS, castIso, castParts, dayIso, isFutureDay, istToday } from './castAt'
+import { istDay, num, shortDate } from './format'
 
 export const SIEVE_MATERIALS = ['20mm', '10mm', 'river_sand', 'crushed_sand'] as const
 export type SieveMaterial = (typeof SIEVE_MATERIALS)[number]
@@ -21,6 +21,25 @@ export const SIEVE_MATERIAL_SHORT: Record<SieveMaterial, string> = {
 }
 
 export const READING_MINUTES = ['0', '30', '60', '90', '120', '150', '180', '210', '240']
+export const readingLabel = (m: string) => (m === '0' ? 'Initial' : `${m} min`)
+
+/** Self compacting tests, one reading per time as in the legacy table ("T 5Min" is T500). */
+export const SCC_TESTS = [
+  { key: 'v_funnel', label: 'V funnel', unit: 's' },
+  { key: 't500', label: 'T500', unit: 's' },
+  { key: 'l_box', label: 'L box, H2 ÷ H1', unit: '' },
+  { key: 'u_box', label: 'U box', unit: '' },
+] as const
+export type SccKey = (typeof SCC_TESTS)[number]['key']
+/** Master data list of each SCC test (legacy Funnel, T5Mint, LBox, UBox), e.g. "5 sec". */
+export const SCC_LIST: Record<SccKey, string> = {
+  v_funnel: 'scc_v_funnel', t500: 'scc_t500', l_box: 'scc_l_box', u_box: 'scc_u_box',
+}
+/** The number a list value stands for: "9 sec" is 9, "1.0" is 1; null when it holds none. */
+export function sccNumber(value: string): string | null {
+  const m = /^\s*(\d+(?:\.\d+)?|\.\d+)/.exec(value)
+  return m ? String(Number(m[1])) : null
+}
 
 export const STEPS = [
   { n: 1, label: 'Sieve analysis', next: 'Next: mix design' },
@@ -30,6 +49,16 @@ export const STEPS = [
   { n: 5, label: 'Conclusion', next: '' },
 ] as const
 export type StepNo = 1 | 2 | 3 | 4 | 5
+
+/** The step that holds a field path, to send people to what is missing. */
+export function stepOfField(field: string): StepNo {
+  const head = field.split('.')[0]
+  if (head === 'sieves' || head === 'proportions') return 1
+  if (['fresh_readings', 'fresh_test', 'fresh_density', 'site_temp', 'bleeding', 'setting', 'scc'].includes(head)) return 3
+  if (head === 'cubes') return 4
+  if (head.startsWith('signatory_') || head.startsWith('signature_') || head === 'remarks' || head === 'outcome') return 5
+  return 2
+}
 
 export const parseStep = (v: unknown): StepNo => {
   const x = Number(Array.isArray(v) ? v[0] : v)
@@ -54,17 +83,61 @@ export const isNegative = (v: string | undefined) => !blank(v) && NUMBER.test(v!
 /** Not a number, or below zero: what a "0 or more" field must not hold. */
 export const badNonNegative = (v: string | undefined) => !isNumberText(v) || isNegative(v)
 
-/** Server ranges for numbers inside the JSON fields (cca/trials/api.py). */
+/**
+ * Hard server limits (cca/trials/api.py): a value breaking one is not saved.
+ * The legacy app took any non negative number in most of these, so the upper
+ * limits only stop garbage; plausible ranges are SOFT warnings (below).
+ */
 export const LIMITS = {
-  retained: 100_000, // g
+  retained: 1_000_000, // kg, as the legacy sheet was labelled
   percent: 100, // proportions, absorption, moisture
-  ssd: 3000, // kg/m³
-  reading: 1000, // mm
-  cubeWeight: 20, // kg
-  cubeLoad: 3000, // kN
+  ssd: 100_000, // kg/m³
+  reading: 100_000, // mm
+  scc: 100_000,
+  cubeWeight: 100_000, // kg as labelled; legacy users also typed grams
+  cubeLoad: 100_000, // kN
   materialText: 100, // cement source and type
   remarks: 1000,
 } as const
+
+/**
+ * Soft ranges (server cca/trials/plausibility.py SOFT): outside them the
+ * value is still saved, with an amber warning. Same texts as the server.
+ */
+export const SOFT: Record<string, [label: string, low: number, high: number, unit: string]> = {
+  dosage: ['Dosage', 0, 10, '%'],
+  batch_size: ['Batch size', 0, 0.5, ' m³'],
+  fresh_density: ['Fresh wet density', 1000, 3000, ' kg/m³'],
+  site_temp: ['Site temperature', 0, 60, ' °C'],
+  ssd: ['SSD design', 0, 3000, ' kg/m³'],
+  reading: ['Reading', 0, 1000, ' mm'],
+  v_funnel: ['V funnel', 0, 60, ' s'],
+  t500: ['T500', 0, 60, ' s'],
+  l_box: ['L box ratio', 0, 1, ''],
+  u_box: ['U box', 0, 1000, ''],
+  cube_weight: ['Cube weight', 0, 20, ' kg'],
+  cube_load: ['Cube load', 0, 3000, ' kN'],
+}
+
+/** The amber warning for a typed value outside its soft range, or null. */
+export function softWarning(kind: keyof typeof SOFT, raw: string | null | undefined, label?: string): string | null {
+  const t = (raw ?? '').trim()
+  if (t === '' || !NUMBER.test(t)) return null
+  const x = Number(t)
+  const [name, low, high, unit] = SOFT[kind]
+  if (x >= low && x <= high) return null
+  const what = label ?? name
+  const shown = String(x)
+  if (kind === 'cube_weight' && x > high) {
+    return `${what} ${shown} kg is far above the 8 to 9 kg of a 150 mm cube. If it was weighed in grams, enter it in kg. Saved as entered.`
+  }
+  return x > high
+    ? `${what} ${shown}${unit} is above the usual ${high}${unit}. Check it. Saved as entered.`
+    : `${what} ${shown}${unit} is below the usual ${low}${unit}. Check it. Saved as entered.`
+}
+
+/** Server warnings ([{field, message}] on the trial) by field path. */
+export const warningsByField = (t: Pick<Trial, 'warnings'>) => Object.fromEntries((t.warnings ?? []).map((w) => [w.field, w.message]))
 
 /** What is wrong with a number the server reads as blank or 0 to max. */
 export function rangeProblem(v: string | undefined, max: number): 'number' | 'negative' | 'max' | null {
@@ -122,7 +195,7 @@ export function decimalProblem(v: string, rule: { label: string; min?: number; m
 export type SieveEntry = { sieve: string; retained: string }
 export type SieveForm = { sieves: Record<SieveMaterial, SieveEntry[]>; proportions: Record<SieveMaterial, string> }
 
-export function sieveForm(t: Trial): SieveForm {
+export function sieveForm(t: Pick<Trial, 'sieves' | 'proportions'>): SieveForm {
   const sieves = {} as SieveForm['sieves']
   const proportions = {} as SieveForm['proportions']
   for (const m of SIEVE_MATERIALS) {
@@ -148,7 +221,7 @@ export function sievePayload(f: SieveForm) {
 }
 
 /** Client checks that block saving step 1, as on the server: retained
- * weights 0 to 100000 g; proportions each 0 to 100 and, once any is
+ * weights 0 to 1000000 kg (garbage only); proportions each 0 to 100 and, once any is
  * entered, totalling exactly 100.00 (blank ones count as 0). */
 export function sieveProblems(f: SieveForm): Record<string, string> {
   const out: Record<string, string> = {}
@@ -157,7 +230,7 @@ export function sieveProblems(f: SieveForm): Record<string, string> {
     if (bad) {
       const where = `Check ${SIEVE_MATERIAL_LABEL[m]} on ${SIEVE_LABEL[bad.sieve] ?? bad.sieve}.`
       out.sieves = rangeProblem(bad.retained, LIMITS.retained) === 'max'
-        ? `Enter retained weights of ${LIMITS.retained} g or less. ${where}`
+        ? `Enter retained weights of ${LIMITS.retained} kg or less. ${where}`
         : `Enter retained weights as numbers of 0 or more. ${where}`
       break
     }
@@ -206,10 +279,12 @@ const MATERIAL_RANGES = [
 ] as const
 
 /** Client checks that block a save, mirroring TrialWriteSerializer: trial
- * date not after today (IST) and not cleared once started; dosage 0 to 10,
- * 2 decimals, and only with its product; batch size above 0, 3 decimals, 6
- * digits; SSD design 0 to 3000 kg/m³, absorption and moisture 0 to 100 %;
- * cement source and type up to 100 characters. */
+ * date not after today (IST) and not cleared once started; dosage 0 to
+ * 99.99 (the legacy input refused 100), 2 decimals, and only with its
+ * product; batch size 0 or more, 3 decimals, 6 digits; SSD design (and the
+ * typed admixture quantity) 0 to 100000 kg/m³, absorption and moisture 0 to
+ * 100 %; source and cement type up to 100 characters. Plausible ranges are
+ * soft warnings (mixSoftWarnings). */
 export function mixProblems(f: MixForm, status?: Trial['status']): Record<string, string> {
   const out: Record<string, string> = {}
   const { iso, error } = castIso(f.cast_date, f.cast_time)
@@ -217,14 +292,13 @@ export function mixProblems(f: MixForm, status?: Trial['status']): Record<string
   else if (iso && isFutureDay(f.cast_date)) out.cast_at = CAST_ERRORS.future
   else if (!iso && status && status !== 'draft') out.cast_at = CAST_ERRORS.cleared
   for (const [k, label, product] of [['dosage_1', 'the dosage', 'admixture_1'], ['dosage_2', 'the second dosage', 'admixture_2']] as const) {
-    const msg = decimalProblem(f[k], { label, min: 0, max: 10, decimals: 2, maxDigits: 5 })
+    const msg = decimalProblem(f[k], { label, min: 0, max: 99.99, decimals: 2, maxDigits: 5 })
     if (msg) out[k] = msg
     else if (!blank(f[k]) && blank(f[product])) out[k] = 'Choose the product before entering its dosage.'
   }
-  const batch = decimalProblem(f.batch_size, { label: 'the batch size', minExclusive: 0, decimals: 3, maxDigits: 6 })
+  const batch = decimalProblem(f.batch_size, { label: 'the batch size', min: 0, decimals: 3, maxDigits: 6 })
   if (batch) out.batch_size = batch
   for (const m of MATERIALS) {
-    if (m === 'admixture_1' || m === 'admixture_2') continue // not sent; the server sets it from the dosage
     const x = f.materials[m]
     const name = MATERIAL_LABEL[m] ?? m
     for (const [k, label, max, unit] of MATERIAL_RANGES) {
@@ -248,8 +322,7 @@ export function mixProblems(f: MixForm, status?: Trial['status']): Record<string
 export function mixPayload(f: MixForm) {
   const materials: Record<string, Record<string, string | null>> = {}
   for (const m of MATERIALS) {
-    if (m === 'admixture_1' || m === 'admixture_2') continue // quantity follows the dosage, set by the server
-    const x = f.materials[m]
+    const x = f.materials[m] // admixture rows carry the quantity typed, as in the legacy app
     const row: Record<string, string | null> = { ssd: orNull(x.ssd) }
     if (AGGREGATES.includes(m)) { row.absorption = orNull(x.absorption); row.moisture = orNull(x.moisture) }
     if (x.source) row.source = x.source
@@ -268,24 +341,64 @@ export function mixPayload(f: MixForm) {
   }
 }
 
+/** Live amber warnings for the mix step (values are still saved). */
+export function mixSoftWarnings(f: MixForm): Record<string, string> {
+  const out: Record<string, string> = {}
+  const add = (k: string, w: string | null) => { if (w) out[k] = w }
+  add('dosage_1', softWarning('dosage', f.dosage_1, 'Dosage of admixture I'))
+  add('dosage_2', softWarning('dosage', f.dosage_2, 'Dosage of admixture II'))
+  add('batch_size', softWarning('batch_size', f.batch_size))
+  for (const m of MATERIALS) add(`materials.${m}.ssd`, softWarning('ssd', f.materials[m]?.ssd, `SSD design of ${MATERIAL_LABEL[m] ?? m}`))
+  const s20 = (f.materials['20mm']?.source ?? '').trim(), s10 = (f.materials['10mm']?.source ?? '').trim()
+  if (s20 && s10 && s20.toLowerCase() !== s10.toLowerCase()) {
+    out['materials.20mm.source'] = 'The 20 mm and 10 mm sources are not equal. The trial cannot start until they match.'
+  }
+  return out
+}
+
+/** Legacy: choosing the 20 mm source copies it to 10 mm when 10 mm has an SSD
+ * design entered, and the reverse. */
+export function withCoarseSource(f: MixForm, m: string, source: string): MixForm {
+  const materials = { ...f.materials, [m]: { ...f.materials[m], source } }
+  const other = m === '20mm' ? '10mm' : m === '10mm' ? '20mm' : null
+  if (other && !blank(f.materials[other].ssd)) materials[other] = { ...f.materials[other], source }
+  return { ...f, materials }
+}
+
 // --- Step 3 ------------------------------------------------------------------------
 export type FreshForm = {
-  fresh_test: '' | 'slump' | 'flow'; readings: Record<string, string>; fresh_density: string
+  fresh_test: '' | 'slump' | 'flow'; readings: Record<string, string>; fresh_density: string; site_temp: string
   bleeding: string; setting: string
+  /** SCC tests added to the table (legacy "Concrete Properties" select), each with a reading per time. */
+  scc_tests: SccKey[]; scc: Record<SccKey, Record<string, string>>
+}
+
+/** A stored SCC test as {minutes: value}; a single value (before per time readings) counts as Initial. */
+export function sccReadings(v: unknown): Record<string, string> {
+  if (v === null || v === undefined || v === '') return {}
+  if (typeof v !== 'object') return { 0: String(v) }
+  return Object.fromEntries(Object.entries(v as Record<string, unknown>).map(([k, x]) => [k, str(x)]))
 }
 
 export function freshForm(t: Trial, project?: Project): FreshForm {
+  const scc = Object.fromEntries(SCC_TESTS.map(({ key }) => {
+    const saved = sccReadings(t.scc?.[key])
+    return [key, Object.fromEntries(READING_MINUTES.map((m) => [m, saved[m] ?? '']))]
+  })) as FreshForm['scc']
   return {
     fresh_test: t.fresh_test || project?.requirement_type || 'slump',
     readings: Object.fromEntries(READING_MINUTES.map((m) => [m, str(t.fresh_readings?.[m])])),
-    fresh_density: str(t.fresh_density),
+    fresh_density: str(t.fresh_density), site_temp: str(t.site_temp),
     bleeding: str(t.bleeding?.id), setting: str(t.setting?.id),
+    scc_tests: SCC_TESTS.map((x) => x.key).filter((k) => Object.values(scc[k]).some((v) => !blank(v))),
+    scc,
   }
 }
 
 const filled = (o: Record<string, string>) => Object.fromEntries(Object.entries(o).filter(([, v]) => !blank(v)).map(([k, v]) => [k, v.trim()]))
 
-/** Readings 0 to 1000 mm (server rule); density 1000 to 3000 kg/m³, 1 decimal. */
+/** Readings and SCC values 0 to 100000 (garbage only); density 0 or more with 1
+ * decimal; site temperature 0 or more with 2 decimals. Plausible ranges are soft. */
 export function freshProblems(f: FreshForm): Record<string, string> {
   const out: Record<string, string> = {}
   const bad = READING_MINUTES.find((m) => outOfRange(f.readings[m], LIMITS.reading))
@@ -295,16 +408,45 @@ export function freshProblems(f: FreshForm): Record<string, string> {
       ? `Enter readings of ${LIMITS.reading} mm or less. ${where}`
       : `Enter readings in mm as numbers of 0 or more. ${where}`
   }
-  const density = decimalProblem(f.fresh_density, { label: 'the density', min: 1000, max: 3000, decimals: 1, maxDigits: 6 })
+  for (const t of SCC_TESTS) {
+    if (!f.scc_tests.includes(t.key)) continue
+    const m = READING_MINUTES.find((x) => outOfRange(f.scc[t.key][x], LIMITS.scc))
+    if (m) {
+      out.scc = `Enter ${t.label} readings as numbers from 0 to ${LIMITS.scc}. Check ${readingLabel(m).toLowerCase()}.`
+      break
+    }
+  }
+  const density = decimalProblem(f.fresh_density, { label: 'the density', min: 0, decimals: 1, maxDigits: 6 })
   if (density) out.fresh_density = density
+  const temp = decimalProblem(f.site_temp, { label: 'the site temperature', min: 0, decimals: 2, maxDigits: 5 })
+  if (temp) out.site_temp = temp
   return out
 }
 
 export function freshPayload(f: FreshForm) {
+  const scc: Record<string, Record<string, string>> = {}
+  for (const k of f.scc_tests) {
+    const readings = filled(f.scc[k])
+    if (Object.keys(readings).length) scc[k] = readings
+  }
   return {
     fresh_test: f.fresh_test, fresh_readings: filled(f.readings), fresh_density: orNull(f.fresh_density),
-    bleeding: idOrNull(f.bleeding), setting: idOrNull(f.setting),
+    site_temp: orNull(f.site_temp), bleeding: idOrNull(f.bleeding), setting: idOrNull(f.setting), scc,
   }
+}
+
+/** Live amber warnings for the fresh concrete step. */
+export function freshSoftWarnings(f: FreshForm): Record<string, string> {
+  const out: Record<string, string> = {}
+  const add = (k: string, w: string | null) => { if (w) out[k] = w }
+  for (const m of READING_MINUTES) add(`fresh_readings.${m}`, softWarning('reading', f.readings[m], `Reading at ${readingLabel(m).toLowerCase()}`))
+  add('fresh_density', softWarning('fresh_density', f.fresh_density))
+  add('site_temp', softWarning('site_temp', f.site_temp))
+  for (const t of SCC_TESTS) {
+    if (!f.scc_tests.includes(t.key)) continue
+    for (const m of READING_MINUTES) add(`scc.${t.key}.${m}`, softWarning(t.key, f.scc[t.key][m], `${SOFT[t.key][0]} at ${readingLabel(m).toLowerCase()}`))
+  }
+  return out
 }
 
 // --- Step 4 ------------------------------------------------------------------------
@@ -318,11 +460,19 @@ export function cubeRows(t: Trial, age: string): CubeEntry[] {
   return rows
 }
 
-/** Server rules for one age: up to 6 cubes, weight 0 to 20 kg, load 0 to 3000 kN, blank allowed. */
+/** Server rules for one age: up to 6 cubes, weight and load 0 to 100000
+ * (garbage only; 20 kg and 3000 kN are soft), blank allowed; the actual test
+ * date (yyyy-mm-dd) not in the future and not before the trial date. */
 export const CUBES_MAX = 6
 export const badCubeWeight = (v: string) => outOfRange(v, LIMITS.cubeWeight)
 export const badCubeLoad = (v: string) => outOfRange(v, LIMITS.cubeLoad)
-export function cubeProblem(rows: CubeEntry[]): string | null {
+export const TESTED_ON_ERRORS = {
+  future: 'The test date cannot be in the future.',
+  beforeCast: 'The test date cannot be before the trial date.',
+} as const
+export function cubeProblem(rows: CubeEntry[], testedOn = '', castAt: string | null = null, today = istToday()): string | null {
+  if (testedOn && testedOn > today) return TESTED_ON_ERRORS.future
+  if (testedOn && castAt && testedOn < istDay(castAt)) return TESTED_ON_ERRORS.beforeCast
   if (rows.length > CUBES_MAX) return `Enter up to ${CUBES_MAX} cubes.`
   for (const [i, r] of rows.entries()) {
     const w = rangeProblem(r.weight, LIMITS.cubeWeight)
@@ -334,7 +484,40 @@ export function cubeProblem(rows: CubeEntry[]): string | null {
   return null
 }
 
-export const cubePayload = (rows: CubeEntry[]) => ({ cubes: rows.map((r) => ({ weight: orNull(r.weight), load: orNull(r.load) })) })
+export const cubePayload = (rows: CubeEntry[], testedOn = '') => ({
+  cubes: rows.map((r) => ({ weight: orNull(r.weight), load: orNull(r.load) })),
+  ...(testedOn ? { tested_on: testedOn } : {}),
+})
+
+/**
+ * Actual test date of a cube set (legacy "Date of Testing", editable), as
+ * yyyy-mm-dd: the saved date, else the due date or today, whichever is
+ * earlier; blank without a trial date.
+ */
+export function testedOnDefault(t: Pick<Trial, 'cast_at' | 'cube_sets'>, age: string, today = istToday()): string {
+  const saved = t.cube_sets.find((c) => c.age === age)?.tested_on
+  if (saved) return saved
+  if (!t.cast_at) return ''
+  const due = istDay(new Date(new Date(t.cast_at).getTime() + AGES[age][1] * 3_600_000))
+  return due < today ? due : today
+}
+
+/** The typed test date (dd/mm/yyyy) as yyyy-mm-dd, or the problem to show. */
+export function testedOnIso(text: string): { iso: string; error: string | null } {
+  const d = dayIso(text)
+  if (d === '') return { iso: '', error: null }
+  if (d === 'format') return { iso: '', error: CAST_ERRORS.dateFormat }
+  if (d === 'invalid') return { iso: '', error: CAST_ERRORS.dateInvalid }
+  return { iso: d, error: null }
+}
+
+/** Live amber warnings for one cube set (a weight typed in grams, an outsized load). */
+export function cubeSoftWarnings(rows: CubeEntry[], ageLabel: string): string[] {
+  return rows.flatMap((r, i) => [
+    softWarning('cube_weight', r.weight, `Weight of cube ${i + 1}, ${ageLabel},`),
+    softWarning('cube_load', r.load, `Load on cube ${i + 1}, ${ageLabel},`),
+  ]).filter((w): w is string => !!w)
+}
 
 export const AGE_ORDER = Object.keys(AGES)
 export const sortAges = (ages: Iterable<string>) => [...new Set(ages)].filter((a) => a in AGES).sort((a, b) => AGE_ORDER.indexOf(a) - AGE_ORDER.indexOf(b))
@@ -369,7 +552,10 @@ export function conclusionForm(t: Trial, project?: Project): ConclusionForm {
     signature_sales: t.signature_sales ?? '', signature_site_qc: t.signature_site_qc ?? '', signature_rd: t.signature_rd ?? '',
   }
 }
-export const conclusionPayload = (f: ConclusionForm) => ({ ...f })
+export const conclusionPayload = (f: ConclusionForm) => ({
+  ...f,
+  signatory_sales: f.signatory_sales.trim(), signatory_site_qc: f.signatory_site_qc.trim(), signatory_rd: f.signatory_rd.trim(),
+})
 
 /** Signatory names are at most 150 characters (server column); signatures at most 400,000 characters of PNG data. */
 export const SIGNATORY_MAX = 150
@@ -415,6 +601,87 @@ export function stepDone(t: Trial, p: Project | undefined): boolean[] {
   const freshDone = at !== null && at !== undefined && at !== ''
   return [sieveDone, !!r.mix?.free_wc, freshDone, !!r.cubes?.['28d']?.average, t.status === 'closed']
 }
+
+// --- Completeness (legacy Create Trial rules) -----------------------------------------
+const positive = (v: unknown) => { const x = num0(v); return x !== null && x > 0 }
+function num0(v: unknown): number | null {
+  if (v === null || v === undefined) return null
+  const t = String(v).trim()
+  return NUMBER.test(t) ? Number(t) : null
+}
+const sieveTotal = (rows: unknown) => (Array.isArray(rows) ? rows : [])
+  .reduce((sum: number, r) => { const x = num0((r as { retained?: unknown })?.retained); return x !== null && x > 0 ? sum + x : sum }, 0)
+const COMPLETENESS_MINERALS = ['fly_ash', 'ggbs', 'alcofine', 'microsilica', 'fiber']
+const SCC_NAME: Record<SccKey, string> = { v_funnel: 'V funnel', t500: 'T500', l_box: 'L box', u_box: 'U box' }
+
+/**
+ * What the legacy app required before a trial could become In progress and
+ * this trial still lacks: the same rules and messages as the server's
+ * plausibility.completeness, worked out on the phone from the trial with its
+ * waiting changes, so an offline Start is stopped before it is queued.
+ */
+export function localCompleteness(t: Trial): FieldNote[] {
+  const out: FieldNote[] = []
+  const add = (field: string, message: string) => out.push({ field, message })
+  const sieves = (t.sieves ?? {}) as Record<string, unknown>
+  const empty = ([['10mm', '10 mm'], ['20mm', '20 mm']] as const).filter(([k]) => sieveTotal(sieves[k]) <= 0).map(([, l]) => l as string)
+  if (sieveTotal(sieves.river_sand) <= 0 && sieveTotal(sieves.crushed_sand) <= 0) empty.push('river sand or crushed sand')
+  if (empty.length) add('sieves', `Sieve analysis: the total for ${empty.join(' and ')} must be greater than 0.`)
+  const props = Object.values(t.proportions ?? {}).map((v) => String(v ?? ''))
+  if (decimalTotal(props) !== '100.00') add('proportions', 'All in grading proportions must total 100%.')
+
+  if (!t.cast_at) add('cast_at', 'Trial date and time is required.')
+  if (num0(t.batch_size) === null) add('batch_size', 'Batch size is required.')
+  else if (!positive(t.batch_size)) add('batch_size', 'Batch size must be greater than 0.')
+  if (!t.admixture_1) add('admixture_1', 'Admixture product is required.')
+  if (num0(t.dosage_1) === null) add('dosage_1', 'Admixture dosage is required.')
+  else if (!positive(t.dosage_1)) add('dosage_1', 'Admixture dosage must be greater than 0.')
+  if (!t.grade_of_concrete) add('grade_of_concrete', 'Grade of concrete is required.')
+
+  const mats = (t.materials ?? {}) as Record<string, Record<string, unknown> | undefined>
+  const row = (m: string) => (mats[m] && typeof mats[m] === 'object' ? mats[m]! : {})
+  const src = (m: string) => String(row(m).source ?? '').trim()
+  const isFilled = (m: string) => !!src(m) || (num0(row(m).ssd) !== null && num0(row(m).ssd) !== 0)
+  const label = (m: string) => MATERIAL_LABEL[m] ?? m
+  for (const m of COMPLETENESS_MINERALS) if (isFilled(m) && !src(m)) add(`materials.${m}.source`, `${label(m)}: mineral admixture source is required.`)
+  if (!src('cement')) add('materials.cement.source', 'Cement brand is required.')
+  if (!String(row('cement').cement_type ?? '').trim()) add('materials.cement.cement_type', 'Type of cement is required.')
+  if (!positive(row('cement').ssd)) add('materials.cement.ssd', 'Cement SSD design should be more than zero.')
+  if (!positive(row('water').ssd)) add('materials.water.ssd', 'Water SSD design should be more than zero.')
+  for (const [pair, either] of [[['20mm', '10mm'], 'Source of the 20 mm or 10 mm aggregate is required.'],
+    [['river_sand', 'crushed_sand'], 'Source of river sand or crushed sand is required.']] as const) {
+    if (!pair.some((m) => src(m))) { add(`materials.${pair[0]}.source`, either); continue }
+    for (const m of pair) {
+      if (!isFilled(m)) continue
+      if (!src(m)) add(`materials.${m}.source`, `${label(m)}: source is required.`)
+      else if (!positive(row(m).ssd)) add(`materials.${m}.ssd`, `${label(m)}: SSD design should be more than zero.`)
+    }
+  }
+  if (src('20mm') && src('10mm') && src('20mm').toLowerCase() !== src('10mm').toLowerCase()) {
+    add('materials.20mm.source', '20 mm and 10 mm sources are not equal.')
+  }
+
+  if (!Object.values(t.fresh_readings ?? {}).some((v) => num0(v) !== null)) add('fresh_readings', 'At least one slump or flow reading is required.')
+  for (const test of SCC_TESTS) {
+    const byTime = (t.scc ?? {})[test.key]
+    if (byTime && typeof byTime === 'object' && Object.keys(byTime).length && !Object.values(byTime).some((v) => num0(v) !== null)) {
+      add(`scc.${test.key}`, `${SCC_NAME[test.key]}: at least one reading is required.`)
+    }
+  }
+  if (num0(t.site_temp) === null) add('site_temp', 'Site temperature is required.')
+  else if (!positive(t.site_temp)) add('site_temp', 'Site temperature must be greater than 0.')
+  if (num0(t.fresh_density) === null) add('fresh_density', 'Fresh wet density is required.')
+  else if (!positive(t.fresh_density)) add('fresh_density', 'Fresh wet density must be greater than 0.')
+  if (!t.bleeding) add('bleeding', 'Bleeding is required.')
+
+  for (const [who, l] of [['rd', 'For Thermax R&D'], ['site_qc', 'For site QC in charge'], ['sales', 'For Thermax Sales Person']] as const) {
+    if (!String(t[`signatory_${who}`] ?? '').trim() && !String(t[`signature_${who}`] ?? '').trim()) add(`signatory_${who}`, `${l} is required.`)
+  }
+  return out
+}
+
+/** {field: message} for a refused Start, as the server's 400 lists them. */
+export const asFields = (notes: FieldNote[]) => notes.reduce<Record<string, string[]>>((o, n) => ({ ...o, [n.field]: [...(o[n.field] ?? []), n.message] }), {})
 
 /** "28 days due 25 Nov" style note for an age that has no result yet. */
 export function dueNote(castAt: string | null, age: string) {

@@ -1,7 +1,7 @@
 // Trial screen flows: live cube strength and Save per age, start trial
 // without a cast date, and closing with the confirm_close round trip.
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react-native'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native'
 import { Alert } from 'react-native'
 
 import type { Project, Trial } from '@/shared/types'
@@ -25,13 +25,16 @@ jest.mock('@/api/client', () => {
 })
 jest.mock('react-native-view-shot', () => ({ captureRef: jest.fn() }))
 jest.mock('react-native-safe-area-context', () => require('react-native-safe-area-context/jest/mock').default)
+let mockRoles: string[] = ['CT']
+jest.mock('@/auth/AuthProvider', () => ({ useAuth: () => ({ hasRole: (...r: string[]) => r.some((x) => mockRoles.includes(x)), user: { id: 1 } }) }))
 
 let mockParams: Record<string, string> = { id: 't-1', step: '4' }
 const mockSetParams = jest.fn((p: Record<string, string>) => { mockParams = { ...mockParams, ...p } })
+const mockPush = jest.fn()
 jest.mock('expo-router', () => ({
   useLocalSearchParams: () => mockParams,
   usePreventRemove: jest.fn(),
-  router: { setParams: (p: Record<string, string>) => mockSetParams(p), back: jest.fn(), canGoBack: () => true, replace: jest.fn(), push: jest.fn() },
+  router: { setParams: (p: Record<string, string>) => mockSetParams(p), back: jest.fn(), canGoBack: () => true, replace: jest.fn(), push: (...a: unknown[]) => mockPush(...a) },
 }))
 
 const project = {
@@ -74,7 +77,7 @@ async function open(step: number) {
   await render(<QueryClientProvider client={qc}><TrialScreen /></QueryClientProvider>)
 }
 
-beforeEach(() => { mockApi.mockReset(); mockSetParams.mockClear(); jest.useFakeTimers({ now: new Date('2026-11-04T06:00:00Z'), advanceTimers: true }) })
+beforeEach(() => { mockApi.mockReset(); mockSetParams.mockClear(); mockPush.mockClear(); mockRoles = ['CT']; jest.useFakeTimers({ now: new Date('2026-11-04T06:00:00Z'), advanceTimers: true }) })
 afterEach(() => { jest.useRealTimers() })
 
 describe('cube strength', () => {
@@ -99,10 +102,70 @@ describe('cube strength', () => {
     await open(4)
     await fireEvent.changeText(await screen.findByLabelText('7 days, cube 1 load in kilonewtons'), '702')
     await fireEvent.press(screen.getByRole('button', { name: 'Save 7 day results' }))
+    // The actual test date (legacy "Date of Testing") goes with the results: due today, so today.
     await waitFor(() => expect(mockApi).toHaveBeenCalledWith('/trials/t-1/cubes/7d/', {
-      method: 'PUT', body: { cubes: [{ weight: null, load: '702' }, { weight: null, load: null }, { weight: null, load: null }] },
+      method: 'PUT', body: { cubes: [{ weight: null, load: '702' }, { weight: null, load: null }, { weight: null, load: null }], tested_on: '2026-11-04' },
     }))
     expect(await screen.findByText('7 days cube results saved')).toBeTruthy()
+  })
+
+  it('takes a typed test date and refuses one in the future (T-66)', async () => {
+    serve(makeTrial(), (path, opts) => (opts?.method === 'PUT' ? makeTrial() : undefined))
+    await open(4)
+    const date = await screen.findByLabelText('7 days cubes, date tested, day month year')
+    expect(date.props.value).toBe('04/11/2026')
+    await fireEvent.changeText(screen.getByLabelText('7 days, cube 1 load in kilonewtons'), '702')
+    await fireEvent.changeText(date, '05112026')
+    await fireEvent.press(screen.getByRole('button', { name: 'Save 7 day results' }))
+    expect(await screen.findByText('The test date cannot be in the future.')).toBeTruthy()
+    await fireEvent.changeText(date, '03/11/2026')
+    await fireEvent.press(screen.getByRole('button', { name: 'Save 7 day results' }))
+    await waitFor(() => expect(mockApi).toHaveBeenCalledWith('/trials/t-1/cubes/7d/', expect.objectContaining({
+      body: expect.objectContaining({ tested_on: '2026-11-03' }),
+    })))
+  })
+
+  it('warns in amber about a cube weight typed in grams but still saves it', async () => {
+    serve(makeTrial(), (path, opts) => (opts?.method === 'PUT' ? makeTrial() : undefined))
+    await open(4)
+    await fireEvent.changeText(await screen.findByLabelText('7 days, cube 1 weight in kilograms'), '8500')
+    expect(screen.getByText(/8500 kg is far above the 8 to 9 kg of a 150 mm cube/)).toBeTruthy()
+    await fireEvent.press(screen.getByRole('button', { name: 'Save 7 day results' }))
+    await waitFor(() => expect(mockApi).toHaveBeenCalledWith('/trials/t-1/cubes/7d/', expect.anything()))
+  })
+})
+
+describe('in progress trial', () => {
+  const started = { edit: false, start: false, close: true, edit_cubes: true, delete: false, attach: true }
+  it('shows the steps read only with the legacy banner', async () => {
+    serve(makeTrial({ actions: started }))
+    await open(3)
+    expect(await screen.findByText(/This trial is in progress, so its steps are read only, as in the old app\./)).toBeTruthy()
+    expect(screen.getByLabelText(/Slump at 30 minutes/).props.editable).toBe(false)
+    expect(screen.queryByRole('button', { name: 'Save' })).toBeNull()
+  })
+})
+
+describe('fresh concrete', () => {
+  it('adds an SCC test from its master list and saves the number per reading time, with the site temperature (T-54, T-57)', async () => {
+    const draft = makeTrial({ status: 'draft', code: null, actions: { edit: true, start: false, close: false, edit_cubes: true, delete: false, attach: true } })
+    const bodies: Record<string, unknown>[] = []
+    serve(draft, (path, opts) => {
+      if (path === '/lookups/') return (opts as { query?: { category?: string } })?.query?.category === 'scc_v_funnel' ? [{ id: 1, value: '9 sec' }, { id: 2, value: '12 sec' }] : []
+      if (path === '/trials/t-1/' && opts?.method === 'PATCH') { bodies.push(opts.body!); return draft }
+      return undefined
+    })
+    await open(3)
+    await fireEvent.press(await screen.findByLabelText(/^Add a self compacting test:/))
+    await fireEvent.press(await screen.findByText('V funnel'))
+    await fireEvent.press(await screen.findByLabelText(/^V funnel at 30 min:/))
+    await fireEvent.press(await screen.findByText('12 sec'))
+    expect(screen.getByLabelText('V funnel at 30 min: 12 sec')).toBeTruthy()
+    await fireEvent.changeText(screen.getByLabelText('Site temperature, degrees Celsius'), '64')
+    expect(screen.getByText('Site temperature 64 °C is above the usual 60 °C. Check it. Saved as entered.')).toBeTruthy()
+    await fireEvent.press(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(bodies).toHaveLength(1))
+    expect(bodies[0]).toMatchObject({ scc: { v_funnel: { 30: '12' } }, site_temp: '64' })
   })
 })
 
@@ -120,34 +183,150 @@ describe('draft trial', () => {
     await waitFor(() => expect(mockSetParams).toHaveBeenCalledWith({ step: '2' }))
     expect(await screen.findByText('Enter the trial date and time before starting. Cube test dates count from it.')).toBeTruthy()
   })
+
+  it('lists everything the server says is missing at Start, each linked to its step (legacy Create Trial rules)', async () => {
+    const { ApiError } = jest.requireMock('@/api/client')
+    const draft = makeTrial({ status: 'draft', code: null, actions: { edit: true, start: true, close: false, edit_cubes: true, delete: false, attach: true } })
+    serve(draft, (path) => {
+      if (path === '/trials/t-1/start/') {
+        throw new ApiError(400, 'validation_error', 'Check the fields.', {
+          'materials.cement.source': ['Cement brand is required.'], site_temp: ['Site temperature is required.'], signatory_rd: ['For Thermax R&D is required.'],
+        })
+      }
+      return undefined
+    })
+    await open(1)
+    await fireEvent.press(await screen.findByRole('button', { name: 'Start trial' }))
+    expect(await screen.findByText('The trial cannot start yet')).toBeTruthy()
+    await fireEvent.press(screen.getByRole('link', { name: 'Fresh concrete: Site temperature is required.' }))
+    expect(mockSetParams).toHaveBeenCalledWith({ step: '3' })
+    expect(screen.getByRole('link', { name: 'Mix design: Cement brand is required.' })).toBeTruthy()
+    expect(screen.getByRole('link', { name: 'Conclusion: For Thermax R&D is required.' })).toBeTruthy()
+  })
+
+  it('shows where a new trial copied its sieve analysis from, in kg', async () => {
+    serve(makeTrial({ status: 'draft', code: null, sieves_copied_from: 'WEST202611471902-02', actions: { edit: true, start: true, close: false, edit_cubes: true, delete: false, attach: true } }))
+    await open(1)
+    expect(await screen.findByText('Sieve analysis copied from WEST202611471902-02. Change it if this trial used other material.')).toBeTruthy()
+    expect(screen.getByText('Retained, kg')).toBeTruthy()
+    expect(screen.getAllByLabelText(/Weight retained on .*, kilograms/)).toHaveLength(9) // all eight grading sieves and the pan
+  })
+
+  it('types the admixture quantity and offers New formulation to a CT, back to this trial (T-36, C-18)', async () => {
+    const draft = makeTrial({ status: 'draft', code: null, actions: { edit: true, start: false, close: false, edit_cubes: true, delete: false, attach: true } })
+    serve(draft)
+    await open(2)
+    await fireEvent.press(await screen.findByRole('button', { name: 'New formulation' }))
+    await waitFor(() => expect(mockPush).toHaveBeenCalledWith({
+      pathname: '/recipes/[id]',
+      params: { id: 'new', for_trial: 't-1', sfdc_no: '', customer_name: '', project_name: 'Palava Phase 4 towers' },
+    }))
+    const { pickNewFormulation } = jest.requireActual('./newFormulation')
+    await act(async () => { pickNewFormulation('t-1', 77) })
+    expect(await screen.findByText('New formulation chosen as the product. Save to keep it.')).toBeTruthy()
+  })
+
+  it('hides New formulation from a Sales Person', async () => {
+    mockRoles = ['SP']
+    serve(makeTrial({ status: 'draft', code: null, actions: { edit: true, start: false, close: false, edit_cubes: true, delete: false, attach: true } }))
+    await open(2)
+    expect(await screen.findByText('Grade of concrete')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'New formulation' })).toBeNull()
+  })
 })
 
 describe('closing', () => {
-  it('asks to confirm when the server answers confirm_close and resends with confirm true', async () => {
-    const { ApiError } = jest.requireMock('@/api/client')
-    const alert = jest.spyOn(Alert, 'alert')
+  const closed = () => makeTrial({ status: 'closed', outcome: 'met', outcome_label: 'Met expectation', actions: { edit: false, start: false, close: false, edit_cubes: false, delete: false, attach: false } })
+
+  it('always asks to confirm (legacy), listing the server warnings, then closes with confirm true', async () => {
+    const alert = jest.spyOn(Alert, 'alert').mockClear()
     const bodies: Record<string, unknown>[] = []
     serve(makeTrial(), (path, opts) => {
+      if (path === '/trials/t-1/close-check/') return { warnings: ['The 28 day cube result is not in yet, due 25 Nov 2026.'], checks: [] }
       if (path !== '/trials/t-1/close/') return undefined
       bodies.push(opts!.body!)
-      if (!opts!.body!.confirm) throw new ApiError(409, 'confirm_close', 'The 28 day cube result is not in yet, due 25 Nov 2026. A Sales Admin can add it after closing.')
-      return makeTrial({ status: 'closed', outcome: 'met', outcome_label: 'Met expectation', actions: { edit: false, start: false, close: false, edit_cubes: false, delete: false, attach: false } })
+      return closed()
     })
     await open(5)
     await fireEvent.press(await screen.findByRole('button', { name: 'Close trial' }))
     expect((await screen.findAllByText('Choose a conclusion before closing the trial.')).length).toBe(2)
 
+    await screen.findByText(/Before you close/)
     await fireEvent.press(screen.getByRole('radio', { name: 'Met expectation' }))
     await fireEvent.press(screen.getByRole('button', { name: 'Close trial' }))
     await waitFor(() => expect(alert).toHaveBeenCalled())
+    expect(bodies).toHaveLength(0) // nothing is closed before the person confirms
     const [title, message, buttons] = alert.mock.calls[0] as [string, string, { text: string; onPress?: () => void }[]]
     expect(title).toBe('Close the trial anyway?')
     expect(message).toContain('The 28 day cube result is not in yet, due 25 Nov 2026.')
     buttons.find((b) => b.text === 'Close trial')!.onPress!()
-    await waitFor(() => expect(bodies).toHaveLength(2))
-    expect(bodies[0]).toEqual({ outcome: 'met', remarks: '' })
-    expect(bodies[1]).toEqual({ outcome: 'met', remarks: '', confirm: true })
+    await waitFor(() => expect(bodies).toHaveLength(1))
+    expect(bodies[0]).toEqual({ outcome: 'met', remarks: '', confirm: true })
     expect(await screen.findByText('Trial closed. WEST202611471902-03, met expectation.')).toBeTruthy()
+  })
+
+  it('asks "Close this trial?" when nothing is pending', async () => {
+    const alert = jest.spyOn(Alert, 'alert').mockClear()
+    serve(makeTrial(), (path) => (path === '/trials/t-1/close/' ? closed() : undefined))
+    await open(5)
+    await fireEvent.press(await screen.findByRole('radio', { name: 'Below expectation' }))
+    await fireEvent.press(screen.getByRole('button', { name: 'Close trial' }))
+    await waitFor(() => expect(alert).toHaveBeenCalled())
+    const [title, message] = alert.mock.calls[0] as [string, string]
+    expect(title).toBe('Close this trial?')
+    expect(message).toContain('Close Palava Phase 4 towers, trial WEST202611471902-03, as below expectation?')
+  })
+
+  it('lets an Admin or Sales Admin change the conclusion of a closed trial (T-14)', async () => {
+    const bodies: Record<string, unknown>[] = []
+    const shut = makeTrial({ status: 'closed', outcome: 'below', outcome_label: 'Below expectation', remarks: 'Low 7 day',
+      actions: { edit: false, start: false, close: false, edit_cubes: true, delete: false, attach: true, change_conclusion: true } })
+    serve(shut, (path, opts) => {
+      if (path !== '/trials/t-1/conclusion/') return undefined
+      bodies.push(opts!.body!)
+      return { ...shut, outcome: 'met', outcome_label: 'Met expectation', remarks: '28 day met' }
+    })
+    await open(5)
+    await fireEvent.press(await screen.findByRole('button', { name: 'Change conclusion' }))
+    await fireEvent.press(screen.getByRole('radio', { name: 'Met expectation' }))
+    await fireEvent.changeText(screen.getByLabelText('Remarks'), '28 day met')
+    await fireEvent.press(screen.getByRole('button', { name: 'Save conclusion' }))
+    await waitFor(() => expect(bodies).toEqual([{ outcome: 'met', remarks: '28 day met' }]))
+    expect(await screen.findByText('Conclusion changed to met expectation.')).toBeTruthy()
+  })
+
+  it('keeps the Sales Person signatory from the project and read only (T-62)', async () => {
+    serve(makeTrial({ status: 'draft', code: null, actions: { edit: true, start: true, close: false, edit_cubes: true, delete: false, attach: true } }))
+    await open(5)
+    const sales = await screen.findByLabelText('Thermax Sales Person, name')
+    expect(sales.props.value).toBe('Amit Kulkarni')
+    expect(sales.props.editable).toBe(false)
+    expect(screen.getByLabelText('Site QC in charge, name').props.editable).toBe(true)
+  })
+})
+
+describe('deleting', () => {
+  it('lets an Admin delete a trial of any status after confirming (T-15)', async () => {
+    const alert = jest.spyOn(Alert, 'alert').mockClear()
+    let deleted = false
+    serve(makeTrial({ actions: { edit: false, start: false, close: true, edit_cubes: true, delete: true, attach: true } }), (path, opts) => {
+      if (path === '/trials/t-1/' && opts?.method === 'DELETE') { deleted = true; return null }
+      return undefined
+    })
+    await open(4)
+    await fireEvent.press(await screen.findByRole('button', { name: 'Delete trial' }))
+    const [title, , buttons] = alert.mock.calls[0] as [string, string, { text: string; onPress?: () => void }[]]
+    expect(title).toBe('Delete trial WEST202611471902-03?')
+    expect(deleted).toBe(false)
+    await act(async () => { buttons.find((b) => b.text === 'Delete trial')!.onPress!() })
+    await waitFor(() => expect(deleted).toBe(true))
+  })
+
+  it('offers no delete to others', async () => {
+    serve(makeTrial())
+    await open(4)
+    await screen.findByText('7 day test, 4 Nov')
+    expect(screen.queryByRole('button', { name: 'Delete trial' })).toBeNull()
   })
 })
 
@@ -162,6 +341,7 @@ describe('error handling', () => {
   })
 
   it('closes once however often Close trial is tapped', async () => {
+    const alert = jest.spyOn(Alert, 'alert').mockClear()
     let closes = 0
     let finish: (t: Trial) => void = () => undefined
     serve(makeTrial(), (path) => {
@@ -171,9 +351,11 @@ describe('error handling', () => {
     })
     await open(5)
     await fireEvent.press(await screen.findByRole('radio', { name: 'Met expectation' }))
-    const button = screen.getByRole('button', { name: 'Close trial' })
-    await fireEvent.press(button)
-    await fireEvent.press(button)
+    await fireEvent.press(screen.getByRole('button', { name: 'Close trial' }))
+    await waitFor(() => expect(alert).toHaveBeenCalled())
+    const confirm = (alert.mock.calls[0][2] as { text: string; onPress?: () => void }[]).find((b) => b.text === 'Close trial')!
+    confirm.onPress!()
+    confirm.onPress!()
     await waitFor(() => expect(closes).toBe(1))
     finish(makeTrial({ status: 'closed', outcome: 'met', outcome_label: 'Met expectation', actions: { edit: false, start: false, close: false, edit_cubes: false, delete: false, attach: false } }))
     expect(await screen.findByText('Trial closed. WEST202611471902-03, met expectation.')).toBeTruthy()
@@ -183,7 +365,7 @@ describe('error handling', () => {
   it('reloads the trial when a save is refused because it was closed meanwhile', async () => {
     const { ApiError } = jest.requireMock('@/api/client')
     let gets = 0
-    serve(makeTrial(), (path, opts) => {
+    serve(makeTrial({ status: 'draft', code: null }), (path, opts) => {
       if (path === '/trials/t-1/' && !opts?.method) { gets += 1; return undefined }
       if (path === '/trials/t-1/' && opts?.method === 'PATCH') {
         throw new ApiError(409, 'not_allowed', 'Closed trials are read only. Cube results can still be added by a Sales Admin.')

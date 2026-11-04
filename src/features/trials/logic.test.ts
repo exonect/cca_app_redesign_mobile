@@ -50,7 +50,7 @@ describe('step payloads', () => {
     })
   })
 
-  it('mix design sends the cast date as IST ISO and leaves admixture quantities to the server', () => {
+  it('mix design sends the cast date as IST ISO and the admixture quantity as typed (legacy)', () => {
     const blankMat = { ssd: '', absorption: '', moisture: '', source: '', cement_type: '' }
     const f: MixForm = {
       cast_date: '28/10/2026', cast_time: '10:15', grade_of_concrete: '4', batch_size: '0.04',
@@ -58,7 +58,7 @@ describe('step payloads', () => {
       materials: {
         cement: { ...blankMat, ssd: '300', cement_type: 'OPC 53' }, '20mm': { ...blankMat, ssd: '546', absorption: '0.5', moisture: '0' },
         admixture_1: { ...blankMat, ssd: '3.78' }, water: { ...blankMat, ssd: '160' },
-        fly_ash: blankMat, ggbs: blankMat, alcofine: blankMat, microsilica: blankMat, '10mm': blankMat, river_sand: blankMat, crushed_sand: blankMat, admixture_2: blankMat,
+        fly_ash: blankMat, ggbs: blankMat, alcofine: blankMat, microsilica: blankMat, fiber: blankMat, '10mm': blankMat, river_sand: blankMat, crushed_sand: blankMat, admixture_2: blankMat,
       },
     }
     const p = mixPayload(f)
@@ -66,6 +66,7 @@ describe('step payloads', () => {
     expect(p.grade_of_concrete).toBe(4)
     expect(p.materials).toEqual({
       cement: { ssd: '300', cement_type: 'OPC 53' }, '20mm': { ssd: '546', absorption: '0.5', moisture: '0' }, water: { ssd: '160' },
+      admixture_1: { ssd: '3.78' },
     })
   })
 
@@ -105,7 +106,9 @@ describe('cube ages and fresh readings', () => {
 describe('attachments and signatures', () => {
   it('names camera photos and rejects unsupported files', () => {
     expect(photoName(null, 'image/jpeg', new Date('2026-11-04T09:15:30Z'))).toBe('Photo_20261104_091530.jpg')
-    expect(photoName('IMG_1.HEIC', 'image/heic', new Date('2026-11-04T09:15:30Z'))).toBe('Photo_20261104_091530.jpg')
+    // iPhone camera photos are HEIC: accepted as they are (legacy took any image).
+    expect(photoName('IMG_1.HEIC', 'image/heic', new Date('2026-11-04T09:15:30Z'))).toBe('IMG_1.HEIC')
+    expect(photoName(null, 'image/heic', new Date('2026-11-04T09:15:30Z'))).toBe('Photo_20261104_091530.heic')
     expect(attachmentProblem({ uri: 'x', name: 'notes.docx', type: '' })).toMatch(/not a PDF/)
     expect(attachmentProblem({ uri: 'x', name: 'cube.pdf', type: '', size: 30 * 1024 * 1024 })).toMatch(/over 25 MB/)
     expect(attachmentProblem({ uri: 'x', name: 'cube.pdf', type: '', size: 1000 })).toBeNull()

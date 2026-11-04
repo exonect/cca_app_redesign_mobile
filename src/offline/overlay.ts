@@ -40,10 +40,10 @@ export function applyPatch(t: Trial, body: Record<string, unknown>, labelFor?: L
   return out
 }
 
-export function applyCubes(t: Trial, age: string, cubes: { weight: string | null; load: string | null }[]): Trial {
+export function applyCubes(t: Trial, age: string, cubes: { weight: string | null; load: string | null }[], testedOn?: string): Trial {
   const sets = t.cube_sets.filter((c) => c.age !== age)
   const old = t.cube_sets.find((c) => c.age === age)
-  sets.push({ age, age_label: old?.age_label ?? AGE_LABEL[age] ?? age, cubes, average: null, tested_on: old?.tested_on ?? null })
+  sets.push({ age, age_label: old?.age_label ?? AGE_LABEL[age] ?? age, cubes, average: null, tested_on: testedOn ?? old?.tested_on ?? null })
   return { ...t, cube_sets: sets }
 }
 
@@ -52,7 +52,8 @@ export function applyStart(t: Trial): Trial {
   return {
     ...t, status: 'in_progress', status_label: 'In progress',
     started_at: t.started_at ?? new Date().toISOString(),
-    actions: { ...t.actions, start: false, delete: false, close: t.actions.edit, edit_cubes: t.actions.edit || t.actions.edit_cubes },
+    // Steps are read only once started (legacy edit rule); cubes, files and close stay open.
+    actions: { ...t.actions, edit: false, start: false, close: t.actions.edit, edit_cubes: t.actions.edit || t.actions.edit_cubes },
   }
 }
 
@@ -80,7 +81,7 @@ export function trialView(server: Trial | undefined, ops: Op[], labelFor?: Label
   if (!t) return undefined
   for (const op of ops) {
     if (op.kind === 'patch_trial') t = applyPatch(t, op.body, labelFor)
-    else if (op.kind === 'put_cubes') t = applyCubes(t, op.age, op.body.cubes)
+    else if (op.kind === 'put_cubes') t = applyCubes(t, op.age, op.body.cubes, op.body.tested_on)
     else if (op.kind === 'start_trial') t = applyStart(t)
   }
   return t

@@ -13,21 +13,22 @@ import Svg, { Path, Polyline } from 'react-native-svg'
 
 import { api, ApiError, fieldErrors } from '@/api/client'
 import { errorMessage } from '@/api/errors'
-import { labelsFrom, useTrialOps } from '@/offline/outbox'
+import { isOnline } from '@/offline/connectivity'
+import { labelsFrom, outbox, useTrialOps } from '@/offline/outbox'
 import { trialView } from '@/offline/overlay'
 import { startTrial as startOrQueue } from '@/offline/trialActions'
 import { NotOnPhone, TrialSyncNote } from '@/offline/ui'
 import { FlagBanner } from '@/features/flags/FlagBanner'
-import type { Project, Trial } from '@/shared/types'
+import type { FieldNote, Project, Trial } from '@/shared/types'
 import type { TrialWithFlags } from '@/shared/typesExt'
-import { Banner, Button, ErrorState, Header, Loading, Screen, TrialStatusChip } from '@/ui/kit'
+import { Banner, Button, ErrorState, Header, Loading, Screen, Small, TrialStatusChip } from '@/ui/kit'
 import { color, font, TOUCH } from '@/ui/theme'
 
 import { ConclusionStep } from './ConclusionStep'
 import { CubesStep } from './CubesStep'
 import { downloadAndShare } from './download'
 import { downloadTrialExcel } from './excel'
-import { parseStep, STEPS, stepDone, type StepNo } from './forms'
+import { localCompleteness, parseStep, STEPS, stepDone, stepOfField, type StepNo } from './forms'
 import { FreshStep } from './FreshStep'
 import { MixStep } from './MixStep'
 import { SieveStep } from './SieveStep'
@@ -66,7 +67,7 @@ export function TrialScreen() {
     return <Screen header={<Header title="Trial" back={{ label: 'back', onPress: () => leaveTo() }} />}><Loading label="Loading trial" /></Screen>
   }
   if (q.isError && !madeHere) return <TrialError error={q.error} onRetry={() => q.refetch()} />
-  return <Workspace trial={view} project={project.data} projectError={project.isError} step={parseStep(params.step)} />
+  return <Workspace trial={view} project={project.data} projectError={project.isError} step={parseStep(params.step)} synced={ops.length === 0} />
 }
 
 function TrialError({ error, onRetry }: { error: unknown; onRetry: () => void }) {
@@ -80,7 +81,16 @@ function TrialError({ error, onRetry }: { error: unknown; onRetry: () => void })
   )
 }
 
-function Workspace({ trial, project, projectError, step }: { trial: Trial; project: Project | undefined; projectError: boolean; step: StepNo }) {
+/** What the trial still needs before Start: the server's list, or worked out on
+ * the phone while changes are waiting to sync. */
+export function stillNeeded(trial: Trial, synced: boolean): FieldNote[] {
+  if (trial.status !== 'draft') return []
+  return synced && trial.completeness ? trial.completeness : localCompleteness(trial)
+}
+
+function Workspace({ trial, project, projectError, step, synced }: {
+  trial: Trial; project: Project | undefined; projectError: boolean; step: StepNo; synced: boolean
+}) {
   const qc = useQueryClient()
   const registry = useSaverRegistry()
   const acceptTrial = useAccept(trial.id)
@@ -127,6 +137,7 @@ function Workspace({ trial, project, projectError, step }: { trial: Trial; proje
   }, [registry, saveAll, step, switchTo])
 
   const [starting, setStarting] = useState(false)
+  const [missing, setMissing] = useState<FieldNote[] | null>(null)
   const startingNow = useRef(false)
   const trialRef = useRef(trial)
   trialRef.current = trial
@@ -140,6 +151,7 @@ function Workspace({ trial, project, projectError, step }: { trial: Trial; proje
       if (registry.isDirty() && !(await saveAll())) return
       // Offline the start is kept on the phone; the trial gets its number when it syncs.
       const { trial: t, queued } = await startOrQueue(qc, trialRef.current)
+      setMissing(null)
       if (queued) notify({ tone: 'info', text: queuedNote('Trial started') + ' It gets its number then.' })
       else {
         accept(t)
@@ -147,7 +159,12 @@ function Workspace({ trial, project, projectError, step }: { trial: Trial; proje
       }
     } catch (e) {
       const f = fieldErrors(e)
-      if (f.cast_at) {
+      if (Object.keys(f).length > 1 || (Object.keys(f).length === 1 && !f.cast_at)) {
+        // Legacy Create Trial rules: list everything still missing, each linked to its step.
+        if (f.cast_at) setCastError(f.cast_at)
+        setMissing(Object.entries(f).map(([field, message]) => ({ field, message })))
+        notify({ tone: 'error', text: 'The trial cannot start yet. What is missing is listed at the top.' })
+      } else if (f.cast_at) {
         setCastError(f.cast_at)
         if (step !== 2) switchTo(2)
         notify({ tone: 'error', text: f.cast_at })
@@ -160,6 +177,34 @@ function Workspace({ trial, project, projectError, step }: { trial: Trial; proje
       setStarting(false)
     }
   }, [registry, saveAll, qc, accept, notify, step, switchTo, reload])
+
+  // Legacy: an Admin deletes a trial of any status, after confirming. Online only.
+  const [deleting, setDeleting] = useState(false)
+  function confirmDelete() {
+    if (!isOnline()) { notify({ tone: 'error', text: 'Deleting a trial needs a connection. Try again when you are back online.' }); return }
+    if (outbox.hasWaiting(trial.id)) { notify({ tone: 'error', text: 'This trial has changes that have not synced yet. Delete it once they have synced.' }); return }
+    Alert.alert(`Delete trial ${trial.code ?? '(draft)'}?`,
+      `Are you sure you want to delete this trial of ${trial.project_name}? Its cube results and files are removed too. This cannot be undone.`, [
+        { text: 'Keep the trial', style: 'cancel' },
+        { text: 'Delete trial', style: 'destructive', onPress: () => { void deleteTrial() } },
+      ])
+  }
+  async function deleteTrial() {
+    setDeleting(true)
+    try {
+      await api(`/trials/${trial.id}/`, { method: 'DELETE' })
+      for (const k of ['sieve', 'mix', 'fresh', 'cubes', 'conclusion']) registry.remove(k)
+      qc.removeQueries({ queryKey: ['trial', trial.id] })
+      void qc.invalidateQueries({ queryKey: ['trials'] })
+      void qc.invalidateQueries({ queryKey: ['project', trial.project] })
+      leaveTo(trial.project)
+    } catch (e) {
+      notify({ tone: 'error', text: errorMessage(e, 'The trial was not deleted. Try again.') })
+      reload(e)
+    } finally {
+      setDeleting(false)
+    }
+  }
 
   // Leaving the screen (back button, gesture, tab) with unsaved work asks first.
   usePreventRemove(registry.dirty, ({ repeat }) => {
@@ -195,16 +240,18 @@ function Workspace({ trial, project, projectError, step }: { trial: Trial; proje
 
   const done = stepDone(trial, project)
   const header = (
-    <TrialHeader trial={trial} project={project} step={step} done={done} onStep={(n) => goTo(n)} onPdf={chooseDownload} pdfBusy={pdfBusy} />
+    <TrialHeader trial={trial} project={project} step={step} done={done} onStep={(n) => goTo(n)} onPdf={chooseDownload} pdfBusy={pdfBusy}
+      onDelete={trial.actions.delete ? confirmDelete : undefined} deleting={deleting} />
   )
 
   const value: WorkspaceValue = useMemo(() => ({
     trial, project, step, header, accept, report: registry.report, remove: registry.remove, dirty: registry.dirty,
-    isDirty: registry.isDirty, saving, saveAll, goTo, next, startTrial, starting, castError, setCastError,
+    isDirty: registry.isDirty, saving, saveAll, goTo, next, startTrial, starting, missing, setMissing, castError, setCastError,
     notice, notify,
-  }), [trial, project, step, header, accept, registry, saving, saveAll, goTo, next, startTrial, starting, castError, notice, notify])
+  }), [trial, project, step, header, accept, registry, saving, saveAll, goTo, next, startTrial, starting, missing, castError, notice, notify])
 
   const readOnly = !trial.actions.edit
+  const needed = stillNeeded(trial, synced)
   const banners = (
     <>
       <TrialSyncNote trialId={trial.id} />
@@ -212,9 +259,18 @@ function Workspace({ trial, project, projectError, step }: { trial: Trial; proje
       {trial.status === 'closed' && (
         <Banner tone="info">This trial is closed and read only.{trial.actions.edit_cubes ? ' You can still add cube results in Cube strength.' : ''}</Banner>
       )}
-      {trial.status === 'draft' && trial.actions.start && (
-        <Banner tone="info">This trial is a draft. Enter the trial date and time in Mix design, then start the trial to give it a number.</Banner>
+      {trial.status === 'in_progress' && (
+        <Banner tone="info">
+          This trial is in progress, so its steps are read only, as in the old app.{trial.actions.close ? ' Add cube results and files, then close it with a conclusion in step 5.' : ''}
+        </Banner>
       )}
+      {trial.status === 'draft' && trial.actions.start && !missing && (
+        <Banner tone="info">
+          This trial is a draft. Complete it, then start the trial to give it a number.
+          {needed.length ? ` Still needed before it can start: ${needed.length} ${needed.length === 1 ? 'item' : 'items'}, listed when you tap Start trial.` : ''}
+        </Banner>
+      )}
+      {missing && trial.status === 'draft' ? <MissingList missing={missing} onGo={(n) => goTo(n)} onClose={() => setMissing(null)} /> : null}
       {projectError && <Banner tone="warn">The customer requirement could not be loaded. Results are still checked on the server.</Banner>}
     </>
   )
@@ -233,8 +289,31 @@ function Workspace({ trial, project, projectError, step }: { trial: Trial; proje
   )
 }
 
-function TrialHeader({ trial, project, step, done, onStep, onPdf, pdfBusy }: {
+/** A refused Start: everything still missing, each linked to its step (legacy Create Trial rules). */
+function MissingList({ missing, onGo, onClose }: { missing: FieldNote[]; onGo: (n: StepNo) => void; onClose: () => void }) {
+  return (
+    <View accessibilityRole="alert" style={{ backgroundColor: '#FBECEB', borderRadius: 10, padding: 12, gap: 6 }}>
+      <Text accessibilityRole="header" style={{ fontFamily: font.semibold, fontSize: 15, color: '#7A1A14' }}>The trial cannot start yet</Text>
+      <Small style={{ color: '#7A1A14' }}>As in the old app, a trial goes In progress only when these are entered:</Small>
+      {missing.map((m) => {
+        const n = stepOfField(m.field)
+        return (
+          <Pressable key={m.field} accessibilityRole="link" accessibilityLabel={`${STEPS[n - 1].label}: ${m.message}`} onPress={() => onGo(n)}
+            style={{ minHeight: TOUCH, justifyContent: 'center' }}>
+            <Text style={{ fontFamily: font.regular, fontSize: 14, color: color.ink }}>
+              <Text style={{ fontFamily: font.semibold, color: color.link, textDecorationLine: 'underline' }}>{STEPS[n - 1].label}</Text>: {m.message}
+            </Text>
+          </Pressable>
+        )
+      })}
+      <Button title="Hide this list" variant="tertiary" onPress={onClose} style={{ alignSelf: 'flex-start', flexGrow: 0 }} />
+    </View>
+  )
+}
+
+function TrialHeader({ trial, project, step, done, onStep, onPdf, pdfBusy, onDelete, deleting }: {
   trial: Trial; project: Project | undefined; step: StepNo; done: boolean[]; onStep: (n: StepNo) => void; onPdf: () => void; pdfBusy: boolean
+  onDelete?: () => void; deleting?: boolean
 }) {
   const projectName = project?.project_name ?? trial.project_name
   return (
@@ -261,6 +340,14 @@ function TrialHeader({ trial, project, step, done, onStep, onPdf, pdfBusy }: {
             <Path d="M12 4v11" /><Polyline points="7 10 12 15 17 10" /><Path d="M5 19h14" />
           </Svg>
         </Pressable>
+        {onDelete ? (
+          <Pressable accessibilityRole="button" accessibilityLabel="Delete trial" accessibilityState={{ busy: deleting, disabled: deleting }}
+            disabled={deleting} onPress={onDelete} style={{ width: TOUCH, height: TOUCH, alignItems: 'center', justifyContent: 'center', opacity: deleting ? 0.5 : 1 }}>
+            <Svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke={color.error} strokeWidth={2} strokeLinecap="round">
+              <Path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13" />
+            </Svg>
+          </Pressable>
+        ) : null}
       </View>
       <View accessibilityRole="tablist" accessibilityLabel="Trial steps" style={{ flexDirection: 'row', gap: 3, paddingLeft: 8 }}>
         {STEPS.map((s, i) => {

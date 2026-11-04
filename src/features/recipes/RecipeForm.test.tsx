@@ -21,6 +21,7 @@ const recipe: Recipe = {
   id: 9, family: 'neutrol', family_label: 'Neutrol', product_name: 'Neutrol 585', version: 1, label: 'Neutrol 585 V1', formulation_name: '',
   sfdc_no: '', formulator: 1, formulator_name: 'Ravi CT', location: 3, location_name: 'Pune', customer_name: '', project_name: '',
   status: 'active', status_label: 'Active', components: { R101: '40.00', J000: '60.00' }, total: '100.00', created_at: '2026-11-01T10:00:00Z', updated_at: '2026-11-01T10:00:00Z',
+  locked: false, trial_count: 0,
 }
 
 beforeEach(() => {

@@ -9,13 +9,13 @@ import { color, font, radius, TOUCH } from '@/ui/theme'
 import { savedNotice, useWorkspace } from './workspace'
 
 /** Compact right aligned numeric cell for lab tables (44 high, 6 px radius, decimal pad). */
-export function CellInput({ invalid, editable = true, style, ...rest }: TextInputProps & { invalid?: boolean }) {
+export function CellInput({ invalid, warn, editable = true, style, ...rest }: TextInputProps & { invalid?: boolean; warn?: boolean }) {
   return (
     <TextInput keyboardType="decimal-pad" inputMode="decimal" placeholderTextColor={color.muted} editable={editable}
       accessibilityState={{ disabled: !editable }}
       style={[{
-        height: TOUCH, borderWidth: invalid ? 2 : 1, borderColor: invalid ? color.error : color.field, borderRadius: 6,
-        paddingHorizontal: invalid ? 9 : 10, textAlign: 'right', fontFamily: font.medium, fontSize: 16, color: color.ink,
+        height: TOUCH, borderWidth: invalid || warn ? 2 : 1, borderColor: invalid ? color.error : warn ? color.amber : color.field, borderRadius: 6,
+        paddingHorizontal: invalid || warn ? 9 : 10, textAlign: 'right', fontFamily: font.medium, fontSize: 16, color: color.ink,
         backgroundColor: editable ? color.surface : color.head, fontVariant: ['tabular-nums'],
       }, !editable && { borderStyle: 'dashed', color: color.subtle }, style]}
       {...rest} />
@@ -86,6 +86,22 @@ export function WarnIcon({ size = 15 }: { size?: number }) {
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color.below.fg} strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
       <Path d="M12 3 2 21h20L12 3z" /><Path d="M12 10v4" /><Path d="M12 17.5v.01" />
     </Svg>
+  )
+}
+
+/** Amber notes for values outside the usual range: saved as entered, worth a check. */
+export function WarnText({ items }: { items: (string | null | undefined)[] }) {
+  const shown = items.filter((x): x is string => !!x)
+  if (!shown.length) return null
+  return (
+    <View accessibilityLiveRegion="polite" style={{ gap: 4 }}>
+      {shown.map((w) => (
+        <View key={w} style={{ flexDirection: 'row', gap: 6, alignItems: 'flex-start' }}>
+          <View style={{ paddingTop: 2 }}><WarnIcon size={13} /></View>
+          <Text style={{ flex: 1, fontFamily: font.regular, fontSize: 13, color: color.below.fg }}>{w}</Text>
+        </View>
+      ))}
+    </View>
   )
 }
 

@@ -8,6 +8,7 @@
 import type { QueryClient } from '@tanstack/react-query'
 
 import type { PickedFile } from '@/features/trials/attachments'
+import { asFields, localCompleteness } from '@/features/trials/forms'
 import type { Project, Trial } from '@/shared/types'
 
 import { isOnline } from './connectivity'
@@ -37,9 +38,21 @@ function sendOrQueue(qc: QueryClient, op: OpInput): Promise<Saved> {
   return run
 }
 
+/** The server's answer to a step edit on a trial that has started (legacy: only drafts are edited). */
+export const STARTED_READ_ONLY = 'A trial in progress cannot be edited. You can add cube results and files, and close it.'
+const notAllowed = (message: string) => Object.assign(new Error(message), { status: 409, code: 'not_allowed', message, fields: {} })
+
 async function saveNow(qc: QueryClient, op: OpInput): Promise<Saved> {
   // Waiting changes must be known (the saved queue read) before deciding to send directly.
   await outbox.load().catch(() => undefined)
+  // Step edits only while the trial is a draft: never send or queue one for a trial
+  // that has started (on the server, or by a start waiting on this phone).
+  if (op.kind === 'patch_trial') {
+    const view = currentView(qc, op.trialId)
+    if (view?.status === 'in_progress' || view?.status === 'closed') {
+      throw notAllowed(view.status === 'closed' ? 'Closed trials are read only.' : STARTED_READ_ONLY)
+    }
+  }
   if (isOnline() && !outbox.hasWaiting(op.trialId)) {
     try {
       const trial = (await sendOp(op)) as Trial
@@ -56,14 +69,24 @@ async function saveNow(qc: QueryClient, op: OpInput): Promise<Saved> {
 export const saveTrialPatch = (qc: QueryClient, trialId: string, body: Record<string, unknown>, what?: string) =>
   sendOrQueue(qc, { kind: 'patch_trial', trialId, body, what })
 
-export const saveCubes = (qc: QueryClient, trialId: string, age: string, body: { cubes: { weight: string | null; load: string | null }[] }) =>
+export const saveCubes = (qc: QueryClient, trialId: string, age: string,
+  body: { cubes: { weight: string | null; load: string | null }[]; tested_on?: string }) =>
   sendOrQueue(qc, { kind: 'put_cubes', trialId, age, body })
 
-/** Start: the server needs the cast date, so a queued start checks it on the phone first. */
+/** Start: the server refuses an incomplete trial (legacy Create Trial rules), so a
+ * start that would be queued is checked on the phone first, on the trial with its
+ * waiting changes; one that still fails on sync becomes a sync problem. */
 export const CAST_NEEDED = 'Enter the trial date and time before starting. Cube test dates count from it.'
+export const START_INCOMPLETE = 'The trial cannot start yet. Fill in what is listed.'
 export async function startTrial(qc: QueryClient, trial: Trial): Promise<Saved> {
-  if ((!isOnline() || outbox.hasWaiting(trial.id)) && !trial.cast_at) {
-    throw Object.assign(new Error(CAST_NEEDED), { status: 400, code: 'invalid', message: CAST_NEEDED, fields: { cast_at: [CAST_NEEDED] } })
+  if (!isOnline() || outbox.hasWaiting(trial.id)) {
+    const missing = localCompleteness(currentView(qc, trial.id) ?? trial)
+    if (missing.length) {
+      const fields = asFields(missing)
+      if (fields.cast_at) fields.cast_at = [CAST_NEEDED]
+      const message = fields.cast_at && missing.length === 1 ? CAST_NEEDED : START_INCOMPLETE
+      throw Object.assign(new Error(message), { status: 400, code: 'invalid', message, fields })
+    }
   }
   return sendOrQueue(qc, { kind: 'start_trial', trialId: trial.id })
 }
@@ -78,7 +101,7 @@ export async function createTrial(qc: QueryClient, project: Pick<Project, 'id' |
 
 /** Photos and files: copied into the app's document directory first, then
  * uploaded in order with a client_id, now or when back online. */
-export async function queueFiles(trialId: string, files: PickedFile[]): Promise<string[]> {
+export async function queueFiles(trialId: string, files: PickedFile[], reading = ''): Promise<string[]> {
   const problems: string[] = []
   for (const f of files) {
     const clientId = newId()
@@ -90,7 +113,7 @@ export async function queueFiles(trialId: string, files: PickedFile[]): Promise<
       continue
     }
     try {
-      await outbox.enqueue({ kind: 'upload_attachment', trialId, clientId, name: f.name, type: f.type, size: f.size ?? null, uri })
+      await outbox.enqueue({ kind: 'upload_attachment', trialId, clientId, name: f.name, type: f.type, size: f.size ?? null, uri, ...(reading ? { reading } : {}) })
     } catch {
       await fileKeeper.drop(uri)
       problems.push(`${f.name}: it could not be saved on this phone. Try again.`)

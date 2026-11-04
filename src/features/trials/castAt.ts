@@ -97,6 +97,19 @@ export function maskTime(text: string) {
   return d.length > 2 ? `${d.slice(0, 2)}:${d.slice(2)}` : d
 }
 
+/** A typed day (dd/mm/yyyy) as yyyy-mm-dd; '' when blank, else why it cannot be read. */
+export function dayIso(text: string): string | 'format' | 'invalid' {
+  if (text.trim() === '') return ''
+  const d = parseDate(text)
+  return typeof d === 'object' ? `${d.y}-${pad(d.m)}-${pad(d.d)}` : d
+}
+
+/** yyyy-mm-dd as dd/mm/yyyy for typing; '' when blank or unreadable. */
+export function dayText(ymd: string | null | undefined): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd ?? '')
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : ''
+}
+
 /** Move the typed date by whole days; an empty or unreadable date starts from today (IST). */
 export function shiftDay(date: string, days: number, now = new Date()): string {
   const parsed = parseDate(date)

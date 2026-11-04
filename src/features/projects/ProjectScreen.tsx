@@ -115,6 +115,8 @@ export function ProjectDetail({ project: p }: { project: Project }) {
   type Act = { key: string; title: string; onPress: () => void; busy?: boolean; danger?: boolean }
   const acts: Act[] = []
   if (a.start_trial) acts.push({ key: 'start_trial', title: `Start trial${trials.data ? ` ${trials.data.count + 1}` : ''}`, onPress: () => startTrial.mutate(), busy: startTrial.isPending })
+  // Legacy "Add sieve data": the project's sieve analysis that new trials start from.
+  if (a.start_trial) acts.push({ key: 'sieve_data', title: 'Sieve data', onPress: () => router.push(`/sieve-data/${p.id}`) })
   if (a.complete) acts.push({ key: 'complete', title: 'Mark completed', onPress: () => setSheet('complete') })
   if (a.assign_ct) acts.push({ key: 'assign_ct', title: p.ct ? 'Change CT' : 'Assign CT', onPress: () => setSheet('assign') })
   if (a.edit) acts.push({ key: 'edit', title: editLabel, onPress: goEdit })

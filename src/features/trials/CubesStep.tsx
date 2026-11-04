@@ -11,12 +11,16 @@ import { fieldErrors } from '@/api/client'
 import { saveCubes } from '@/offline/trialActions'
 import { AGES, cubeAverage, f2, n, STANDARD_AGES, strength, testDue } from '@/shared/calc'
 import type { Trial } from '@/shared/types'
-import { Banner, Button, Screen, Small } from '@/ui/kit'
+import { Banner, Button, Screen, Small, TextField } from '@/ui/kit'
 import { color, font, radius } from '@/ui/theme'
 
+import { dayText, maskDate } from './castAt'
 import { istDay, shortDate } from './format'
-import { badCubeLoad, badCubeWeight, cubePayload, cubeProblem, cubeRows, pct, requirementTargets, sortAges, type CubeEntry } from './forms'
-import { CellInput, cell, StepFooter, TableHead } from './parts'
+import {
+  badCubeLoad, badCubeWeight, cubePayload, cubeProblem, cubeRows, cubeSoftWarnings, pct, requirementTargets, softWarning, sortAges, testedOnDefault,
+  testedOnIso, type CubeEntry,
+} from './forms'
+import { CellInput, cell, StepFooter, TableHead, WarnText } from './parts'
 import { queuedNote, saveError, useReloadTrial, useSaver, useWorkspace } from './workspace'
 
 const OPTIONAL_AGES = Object.keys(AGES).filter((a) => !STANDARD_AGES.includes(a))
@@ -41,8 +45,15 @@ export function chipLabel(trial: Trial, age: string, state: AgeState) {
 }
 
 
-type AgeForm = { rows: CubeEntry[]; baseline: CubeEntry[] }
-const isDirty = (f: AgeForm | undefined) => !!f && JSON.stringify(cubePayload(f.rows)) !== JSON.stringify(cubePayload(f.baseline))
+/** testedOn: the actual test date as typed (dd/mm/yyyy), legacy "Date of Testing". */
+type AgeForm = { rows: CubeEntry[]; baseline: CubeEntry[]; testedOn: string; baseTestedOn: string }
+const isDirty = (f: AgeForm | undefined) => !!f
+  && (JSON.stringify(cubePayload(f.rows)) !== JSON.stringify(cubePayload(f.baseline)) || f.testedOn.trim() !== f.baseTestedOn.trim())
+const ageForm = (t: Trial, age: string): AgeForm => {
+  const rows = cubeRows(t, age)
+  const on = dayText(testedOnDefault(t, age))
+  return { rows, baseline: rows, testedOn: on, baseTestedOn: on }
+}
 
 export function CubesStep({ canEdit, banners }: { canEdit: boolean; banners: ReactNode }) {
   const { trial, project, header, accept, notify, startTrial, starting, next, saving: savingAll } = useWorkspace()
@@ -59,7 +70,7 @@ export function CubesStep({ canEdit, banners }: { canEdit: boolean; banners: Rea
   const target = requirementTargets(project).strength
   const targetLabel = target ? `${target.value} N/mm² at ${AGES[target.age]?.[0] ?? '28 days'}` : null
 
-  const formFor = (a: string): AgeForm => forms[a] ?? { rows: cubeRows(trial, a), baseline: cubeRows(trial, a) }
+  const formFor = (a: string): AgeForm => forms[a] ?? ageForm(trial, a)
   const dirtyAges = ages.filter((a) => isDirty(forms[a]))
 
   const qc = useQueryClient()
@@ -69,7 +80,8 @@ export function CubesStep({ canEdit, banners }: { canEdit: boolean; banners: Rea
     const f = forms[age]
     if (!f) return true
     setErrors((e) => ({ ...e, [age]: '' }))
-    const local = cubeProblem(f.rows)
+    const on = testedOnIso(f.testedOn)
+    const local = on.error ?? cubeProblem(f.rows, on.iso, trial.cast_at)
     if (local) {
       setErrors((x) => ({ ...x, [age]: local }))
       notify({ tone: 'error', text: `${AGES[age][0]}: ${local}` })
@@ -79,10 +91,11 @@ export function CubesStep({ canEdit, banners }: { canEdit: boolean; banners: Rea
     setSavingAge(age)
     try {
       // Online: PUT now. Offline: kept on the phone and synced later.
-      const { trial: t, queued } = await saveCubes(qc, trial.id, age, cubePayload(f.rows))
+      // The test date goes with results (or a saved set); an empty age keeps none.
+      const hasCubes = f.rows.some((r) => r.weight.trim() || r.load.trim()) || trial.cube_sets.some((c) => c.age === age)
+      const { trial: t, queued } = await saveCubes(qc, trial.id, age, cubePayload(f.rows, hasCubes ? on.iso : ''))
       if (!queued) accept(t)
-      const fresh = cubeRows(t, age)
-      setForms((x) => ({ ...x, [age]: { rows: fresh, baseline: fresh } }))
+      setForms((x) => ({ ...x, [age]: ageForm(t, age) }))
       notify(queued ? { tone: 'info', text: queuedNote(`${AGES[age][0]} cube results saved`) } : { tone: 'ok', text: `${AGES[age][0]} cube results saved` })
       return true
     } catch (e) {
@@ -108,6 +121,7 @@ export function CubesStep({ canEdit, banners }: { canEdit: boolean; banners: Rea
     const f = x[age] ?? formFor(age)
     return { ...x, [age]: { ...f, rows: f.rows.map((r, j) => (j === i ? { ...r, [k]: v } : r)) } }
   })
+  const setTestedOn = (age: string, v: string) => setForms((x) => ({ ...x, [age]: { ...(x[age] ?? formFor(age)), testedOn: v } }))
 
   const label = AGES[selected][0]
   const selDirty = dirtyAges.includes(selected)
@@ -185,7 +199,7 @@ export function CubesStep({ canEdit, banners }: { canEdit: boolean; banners: Rea
       )}
 
       <AgeCard age={selected} form={formFor(selected)} dirty={selDirty} canEdit={canEdit} target={target} error={errors[selected]}
-        onChange={(i, k, v) => setRow(selected, i, k, v)}
+        onChange={(i, k, v) => setRow(selected, i, k, v)} onTestedOn={(v) => setTestedOn(selected, v)}
         onRemove={added.includes(selected) && !saved.includes(selected) ? () => {
           setAdded((x) => x.filter((y) => y !== selected))
           setForms((x) => { const { [selected]: _, ...rest } = x; return rest })
@@ -211,9 +225,9 @@ export function CubesStep({ canEdit, banners }: { canEdit: boolean; banners: Rea
   )
 }
 
-function AgeCard({ age, form, dirty, canEdit, target, error, onChange, onRemove }: {
+function AgeCard({ age, form, dirty, canEdit, target, error, onChange, onTestedOn, onRemove }: {
   age: string; form: AgeForm; dirty: boolean; canEdit: boolean; target: { value: number; age: string } | null; error?: string
-  onChange: (i: number, k: keyof CubeEntry, v: string) => void; onRemove?: () => void
+  onChange: (i: number, k: keyof CubeEntry, v: string) => void; onTestedOn: (v: string) => void; onRemove?: () => void
 }) {
   const { trial } = useWorkspace()
   const label = AGES[age][0]
@@ -236,11 +250,11 @@ function AgeCard({ age, form, dirty, canEdit, target, error, onChange, onRemove 
           <Text style={[{ fontFamily: font.semibold, fontSize: 15, color: color.ink }, cell(44)]}>{i + 1}</Text>
           <View style={cell('flex')}>
             <CellInput accessibilityLabel={`${label}, cube ${i + 1} weight in kilograms`} value={r.weight} editable={canEdit}
-              invalid={badCubeWeight(r.weight)} onChangeText={(v) => onChange(i, 'weight', v)} />
+              invalid={badCubeWeight(r.weight)} warn={!!softWarning('cube_weight', r.weight)} onChangeText={(v) => onChange(i, 'weight', v)} />
           </View>
           <View style={cell('flex')}>
             <CellInput accessibilityLabel={`${label}, cube ${i + 1} load in kilonewtons`} value={r.load} editable={canEdit}
-              invalid={badCubeLoad(r.load)} onChangeText={(v) => onChange(i, 'load', v)} />
+              invalid={badCubeLoad(r.load)} warn={!!softWarning('cube_load', r.load)} onChangeText={(v) => onChange(i, 'load', v)} />
           </View>
           <Text testID={`str-${age}-${i}`} style={[{ fontFamily: font.semibold, fontSize: 16, color: color.ink, textAlign: 'right', fontVariant: ['tabular-nums'] }, cell('flex')]}>
             {f2(strength(r.load)) || '–'}
@@ -260,6 +274,18 @@ function AgeCard({ age, form, dirty, canEdit, target, error, onChange, onRemove 
           {avg !== null ? f2(avg) : '–'}
         </Text>
       </View>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 16, paddingVertical: 10, borderTopWidth: 1, borderColor: color.divider }}>
+        <View style={{ flex: 1 }}>
+          <Text style={{ fontFamily: font.semibold, fontSize: 14, color: color.ink }}>Tested on</Text>
+          <Small>{trial.cast_at ? 'Actual test date, dd/mm/yyyy' : 'Enter the trial date first'}</Small>
+        </View>
+        <View style={{ width: 150 }}>
+          <TextField accessibilityLabel={`${label} cubes, date tested, day month year`} placeholder="dd/mm/yyyy" value={form.testedOn}
+            editable={canEdit && !!trial.cast_at} keyboardType="number-pad" inputMode="numeric" maxLength={10}
+            onChangeText={(v) => onTestedOn(maskDate(v))} />
+        </View>
+      </View>
+      <View style={{ paddingHorizontal: 12 }}><WarnText items={cubeSoftWarnings(form.rows, label)} /></View>
       {error ? <View style={{ padding: 12 }}><Banner tone="error">{error}</Banner></View> : null}
     </View>
   )
