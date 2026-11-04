@@ -136,7 +136,8 @@ export async function toError(r: Response): Promise<ApiError> {
   if (!e || typeof e !== 'object') {
     if (r.status === 413) return new ApiError(413, 'too_large', MESSAGES.tooLarge)
     if (r.status === 429) return new ApiError(429, 'throttled', MESSAGES.throttled)
-    return new ApiError(r.status, 'error', MESSAGES.failed)
+    // No API error body: an answer from something in between (a Wi-Fi sign in page, a proxy), not the API.
+    return new ApiError(r.status, 'unexpected_response', MESSAGES.failed)
   }
   const fields = e.fields && typeof e.fields === 'object' && !Array.isArray(e.fields) ? e.fields as Record<string, string[]> : {}
   return new ApiError(r.status, typeof e.code === 'string' ? e.code : 'error',

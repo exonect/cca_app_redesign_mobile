@@ -12,6 +12,7 @@ import { attachmentForm } from '@/features/trials/attachments'
 import type { Lookup, Recipe, Trial } from '@/shared/types'
 import type { Attachment } from '@/shared/typesExt'
 
+import { saveCacheNow } from './cache'
 import { isOnline } from './connectivity'
 import type { LabelFor } from './overlay'
 import { Outbox, PermanentError, type Op, type OpInput } from './queue'
@@ -19,6 +20,10 @@ import { fileKeeper, offlineStorage } from './storage'
 
 let client: QueryClient | null = null
 export function bindQueryClient(qc: QueryClient | null) { client = qc }
+
+function keptUri(stored: string) {
+  try { return fileKeeper.uriOf(stored) } catch { return stored } // no file system: use what was stored
+}
 
 function fileExists(uri: string) {
   try { return new File(uri).exists } catch { return true } // cannot tell: let the upload try
@@ -35,11 +40,14 @@ export function sendOp(op: OpInput): Promise<unknown> {
       return api<Trial>(`/trials/${op.trialId}/cubes/${op.age}/`, { method: 'PUT', body: op.body })
     case 'start_trial':
       return api<Trial>(`/trials/${op.trialId}/start/`, { method: 'POST' })
-    case 'upload_attachment':
-      if (!fileExists(op.uri)) return Promise.reject(new PermanentError(`${op.name} is no longer on this phone. Discard it and add the file again.`))
+    case 'upload_attachment': {
+      // The queue keeps the file's name; where it lives is worked out now (the path changes on an iOS update).
+      const uri = keptUri(op.uri)
+      if (!fileExists(uri)) return Promise.reject(new PermanentError(`${op.name} is no longer on this phone. Discard it and add the file again.`))
       return api<Attachment>(`/trials/${op.trialId}/attachments/`, {
-        form: attachmentForm({ uri: op.uri, name: op.name, type: op.type }, op.clientId), timeoutMs: UPLOAD_TIMEOUT_MS,
+        form: attachmentForm({ uri, name: op.name, type: op.type }, op.clientId), timeoutMs: UPLOAD_TIMEOUT_MS,
       })
+    }
   }
 }
 
@@ -64,7 +72,11 @@ export const outbox = new Outbox({
     remove: (n) => offlineStorage().remove(n),
   },
   send: (op) => sendOp(op),
-  onSent: (op, result) => { if (client) storeResult(client, op, result) },
+  onSent: async (op, result) => {
+    if (!client) return
+    storeResult(client, op, result)
+    await saveCacheNow()
+  },
   onRemoved: (op) => { if (op.kind === 'upload_attachment') void fileKeeper.drop(op.uri) },
   uuid: () => Crypto.randomUUID(),
 })

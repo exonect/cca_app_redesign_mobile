@@ -3,7 +3,7 @@ import { QueryClient } from '@tanstack/react-query'
 
 import type { User } from '@/shared/types'
 
-import { CACHE_MAX_AGE_MS, cachedUser, clearCache, persistOnChange, restoreCache, saveCache, shouldPersist } from './cache'
+import { CACHE_MAX_AGE_MS, cachedUser, clearCache, persistOnChange, restoreCache, saveCache, saveCacheNow, shouldPersist } from './cache'
 import { memoryStorage } from './storage'
 
 const user = { id: 7, full_name: 'Sneha Rao', role: 'CT' } as User
@@ -78,5 +78,15 @@ describe('save and restore', () => {
     } finally {
       jest.useRealTimers()
     }
+  })
+
+  it('saves at once when asked (a change just synced), without waiting for the timer', async () => {
+    const storage = memoryStorage()
+    const qc = new QueryClient({ defaultOptions: { queries: { gcTime: Infinity } } })
+    const p = persistOnChange(storage, qc, user, 60_000)
+    qc.setQueryData(['trial', 't2'], { id: 't2', remarks: 'synced' })
+    await saveCacheNow()
+    expect(JSON.stringify(JSON.parse(storage.docs['cache.json']).state)).toContain('synced')
+    p.stop()
   })
 })

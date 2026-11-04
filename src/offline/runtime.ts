@@ -84,10 +84,12 @@ export function useOfflineRuntime(qc: QueryClient, user: User | null): boolean {
       await restoreCache(storage, qc, user.id).catch(() => false)
       if (cancelled) return
       persister = persistOnChange(storage, qc, user)
-      setReady(true)
+      // The queue is read and the person set before screens open, so a save made
+      // straight away sees the trial's waiting changes instead of going around them.
+      outbox.setUser(user.id)
       if (!outbox.loaded) await outbox.load().catch(() => undefined)
       if (cancelled) return
-      outbox.setUser(user.id)
+      setReady(true)
       kick()
       warm()
     })()
@@ -98,13 +100,16 @@ export function useOfflineRuntime(qc: QueryClient, user: User | null): boolean {
       if (now && !wasOnline) { kick(); warm() }
       wasOnline = now
     })
+    // A queue that could not be read at launch (phone still locked, for example) is read again later.
+    const retryLoad = () => { if (!outbox.loaded) void outbox.load().then(kick, () => undefined) }
     const appState = AppState.addEventListener('change', (s) => {
-      if (s === 'active') kick()
+      if (s === 'active') { retryLoad(); kick() }
       else void persister?.saveNow()
     })
     const tick = setInterval(() => {
       // Requests failed but the phone says it has a network: check whether the server is back.
       if (!isOnline() && !networkDown()) void ping()
+      retryLoad()
       if (outbox.getSnapshot().some((o) => o.state === 'pending')) kick()
     }, TICK_MS)
     return () => {

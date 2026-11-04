@@ -7,6 +7,7 @@ import type { Trial } from '@/shared/types'
 import { resetConnectivity, setNetwork } from './connectivity'
 import { bindQueryClient, outbox } from './outbox'
 import { trialView } from './overlay'
+import { fileKeeper, offlineStorage } from './storage'
 import { CLOSE_OFFLINE, CLOSE_WAITING, createTrial, queueFiles, readyToClose, saveCubes, saveTrialPatch, startTrial } from './trialActions'
 
 const mockApi = jest.fn()
@@ -21,7 +22,9 @@ jest.mock('./storage', () => {
     memoryStorage,
     offlineStorage: () => store,
     fileKeeper: {
-      keep: jest.fn(async (_uri: string, clientId: string, name: string) => `file:///doc/cca-offline/files/${clientId}.${name.split('.').pop()}`),
+      keep: jest.fn(async (_uri: string, clientId: string, name: string) => `${clientId}.${name.split('.').pop()}`),
+      // Where the app's folder is now (it moves when iOS updates the app).
+      uriOf: (stored: string) => `file:///now/cca-offline/files/${stored.slice(stored.lastIndexOf('/') + 1)}`,
       drop: jest.fn(async () => undefined),
     },
   }
@@ -123,11 +126,16 @@ describe('offline', () => {
     const problems = await queueFiles('t9', [{ uri: 'file:///cache/ImagePicker/x.jpg', name: 'Photo_1.jpg', type: 'image/jpeg', size: 1200 }])
     expect(problems).toEqual([])
     const [op] = outbox.getSnapshot()
-    expect(op).toMatchObject({ kind: 'upload_attachment', name: 'Photo_1.jpg', uri: expect.stringContaining('/cca-offline/files/') })
+    // Only the kept file's name is stored: the app's folder path changes when iOS updates the app.
+    expect(op).toMatchObject({ kind: 'upload_attachment', name: 'Photo_1.jpg', uri: `${(op as { clientId: string }).clientId}.jpg` })
     resetConnectivity()
     mockApi.mockResolvedValueOnce({ id: 31, client_id: (op as { clientId: string }).clientId, original_name: 'Photo_1.jpg' })
     qc.setQueryData(['trial', 't9'], { id: 't9', attachments: [] })
+    const append = jest.spyOn(FormData.prototype, 'append')
     await outbox.flush()
+    // The file is read from where the app's folder is now, worked out at send time.
+    expect(append).toHaveBeenCalledWith('file', expect.objectContaining({ uri: `file:///now/cca-offline/files/${(op as { clientId: string }).clientId}.jpg` }))
+    append.mockRestore()
     const [path, opts] = mockApi.mock.calls[0]
     expect(path).toBe('/trials/t9/attachments/')
     expect((opts.form as FormData).get('client_id')).toBe((op as { clientId: string }).clientId)
@@ -144,6 +152,49 @@ describe('offline', () => {
     await outbox.flush()
     // One merged PATCH, sent by the replay, never a direct PATCH that could overtake the first.
     expect(mockApi.mock.calls).toEqual([['/trials/t1/', { method: 'PATCH', body: { remarks: 'a', batch_size: '0.05' } }]])
+  })
+})
+
+describe('saving twice', () => {
+  it('a save that timed out never replays its older value over a later save of the same trial', async () => {
+    let timeOutFirst!: () => void
+    mockApi.mockImplementationOnce(() => new Promise((_, reject) => { timeOutFirst = () => reject(new ApiError(0, 'timeout', 'Too slow.')) }))
+    mockApi.mockResolvedValue({ id: 't1' })
+    const first = saveTrialPatch(qc, 't1', { remarks: 'old' })
+    const second = saveTrialPatch(qc, 't1', { remarks: 'new' })
+    await new Promise((r) => setTimeout(r, 0))
+    timeOutFirst()
+    await first
+    await second // waited for the first (now queued and replayed), so it lands after it
+    await outbox.flush()
+    const bodies = mockApi.mock.calls.map(([, opts]) => opts.body.remarks)
+    expect(bodies[0]).toBe('old')
+    expect(bodies[bodies.length - 1]).toBe('new')
+    expect(outbox.getSnapshot()).toEqual([])
+  })
+
+  it('keeps a save on the phone when a Wi-Fi sign in page answers instead of the server', async () => {
+    mockApi.mockRejectedValueOnce(new ApiError(200, 'bad_response', 'Something went wrong on the server.'))
+    goOffline() // no replay right away
+    resetConnectivity()
+    mockApi.mockRejectedValue(new ApiError(0, 'offline', 'No connection.'))
+    const r = await saveTrialPatch(qc, 't1', { remarks: 'x' })
+    expect(r.queued).toBe(true)
+    expect(outbox.getSnapshot()).toMatchObject([{ kind: 'patch_trial', body: { remarks: 'x' } }])
+  })
+
+  it('removes a kept photo and leaves nothing queued when the queue cannot be stored', async () => {
+    const store = offlineStorage()
+    const write = store.write
+    store.write = async () => { throw new Error('ENOSPC') }
+    try {
+      const problems = await queueFiles('t9', [{ uri: 'file:///cache/x.jpg', name: 'x.jpg', type: 'image/jpeg', size: 1 }])
+      expect(problems).toEqual(['x.jpg: it could not be saved on this phone. Try again.'])
+    } finally {
+      store.write = write
+    }
+    expect(outbox.getSnapshot()).toEqual([])
+    expect(fileKeeper.drop).toHaveBeenCalledWith(expect.stringMatching(/\.jpg$/))
   })
 })
 

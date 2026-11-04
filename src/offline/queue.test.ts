@@ -228,3 +228,105 @@ describe('per user', () => {
     await expect(box.enqueue(patch('t1', {}))).rejects.toThrow()
   })
 })
+
+describe('fixing and recovering', () => {
+  it('merges a correcting edit into a refused change and sends the merged content', async () => {
+    let refuse = true
+    const { box, sent } = setup(async (op) => {
+      if (refuse) { refuse = false; throw new ApiError(400, 'invalid', 'Some fields need attention.', { grade_of_concrete: ['This grade is no longer used.'] }) }
+      return { id: op.trialId }
+    })
+    await box.enqueue(patch('t1', { sieves: { a: 1 } }, 'Sieves'))
+    await box.enqueue(patch('t1', { grade_of_concrete: 99 }, 'Mix design'))
+    await box.flush()
+    expect(box.getSnapshot()[0].state).toBe('failed')
+    const fixed = await box.enqueue(patch('t1', { grade_of_concrete: 5 }, 'Mix design'))
+    expect(box.getSnapshot()).toHaveLength(1)
+    expect(fixed).toMatchObject({ state: 'pending', attempts: 0, body: { sieves: { a: 1 }, grade_of_concrete: 5 } })
+    expect(fixed.error).toBeUndefined()
+    await box.flush()
+    expect((sent[1] as Extract<Op, { kind: 'patch_trial' }>).body).toEqual({ sieves: { a: 1 }, grade_of_concrete: 5 })
+    expect(box.getSnapshot()).toEqual([])
+  })
+
+  it('one upload that keeps timing out does not hold up other trials', async () => {
+    const { box, sent } = setup(async (op) => { if (op.kind === 'upload_attachment') throw new ApiError(0, 'timeout', 'Too slow.'); return {} })
+    await box.enqueue({ kind: 'upload_attachment', trialId: 'A', clientId: 'c', name: 'v.mp4', type: 'video/mp4', size: 1, uri: 'c.mp4' })
+    await box.enqueue({ kind: 'start_trial', trialId: 'A' })
+    await box.enqueue(patch('B', { remarks: 'x' }))
+    const r = await box.flush()
+    expect(r).toEqual({ sent: 1, failed: 0, stopped: 'offline' })
+    expect(sent.map((o) => `${o.kind}:${o.trialId}`)).toEqual(['upload_attachment:A', 'patch_trial:B'])
+    expect(box.getSnapshot().map((o) => [o.kind, o.state, o.attempts])).toEqual([['upload_attachment', 'pending', 1], ['start_trial', 'pending', 0]])
+  })
+
+  it('treats an answer that is not from the API (a Wi-Fi sign in page) as no connection, not a sync problem', async () => {
+    expect(classify(new ApiError(200, 'bad_response', 'x'), 1)).toBe('retry')
+    expect(classify(new ApiError(403, 'unexpected_response', 'x'), 9)).toBe('retry')
+    expect(classify(new ApiError(403, 'forbidden', 'x'), 1)).toBe('fail')
+    const { box } = setup(async () => { throw new ApiError(200, 'bad_response', 'Something went wrong on the server.') })
+    await box.enqueue(patch('t1', { remarks: 'x' }))
+    expect((await box.flush()).stopped).toBe('offline')
+    expect(box.getSnapshot()[0].state).toBe('pending')
+  })
+
+  it('takes a change back out when the queue could not be stored, new or merged', async () => {
+    const storage = memoryStorage()
+    const write = storage.write
+    let fail = false
+    storage.write = async (n, t) => { if (fail) throw new Error('ENOSPC'); return write(n, t) }
+    const { box } = setup(undefined, storage)
+    await box.enqueue(patch('t1', { remarks: 'kept' }))
+    fail = true
+    await expect(box.enqueue({ kind: 'upload_attachment', trialId: 't2', clientId: 'c', name: 'p.jpg', type: 'image/jpeg', size: 1, uri: 'c.jpg' })).rejects.toThrow('ENOSPC')
+    await expect(box.enqueue(patch('t1', { remarks: 'lost' }))).rejects.toThrow('ENOSPC')
+    expect(box.getSnapshot()).toMatchObject([{ kind: 'patch_trial', body: { remarks: 'kept' } }])
+  })
+
+  it('does not take a queue it cannot read for an empty one, and never saves over it', async () => {
+    const saved = JSON.stringify({ v: 1, ops: [{ id: 'old', kind: 'start_trial', trialId: 't1', userId: 7, createdAt: '', state: 'pending', attempts: 0 }] })
+    const storage = memoryStorage({ 'queue.json': saved })
+    const read = storage.read
+    let locked = true
+    storage.read = async (n) => { if (locked) throw new Error('protected'); return read(n) }
+    const { box, sent } = setup(undefined, storage)
+    await expect(box.load()).rejects.toThrow('protected')
+    expect(box.loaded).toBe(false)
+    await expect(box.enqueue(patch('t1', { remarks: 'x' }))).rejects.toThrow('protected')
+    expect(await box.flush()).toEqual({ sent: 0, failed: 0, stopped: null })
+    expect(sent).toEqual([])
+    expect(storage.docs['queue.json']).toBe(saved)
+    locked = false
+    await box.load()
+    expect(box.getSnapshot().map((o) => o.id)).toEqual(['old'])
+  })
+
+  it('sets entries it does not understand aside instead of dropping them', async () => {
+    const odd = { id: 'z', kind: 'delete_trial', trialId: 't1', userId: 7, createdAt: '', state: 'pending', attempts: 0 }
+    const ok = { id: 'a', kind: 'start_trial', trialId: 't1', userId: 7, createdAt: '', state: 'pending', attempts: 0 }
+    const storage = memoryStorage({ 'queue.json': JSON.stringify({ v: 1, ops: [ok, odd] }) })
+    const { box } = setup(undefined, storage)
+    await box.load()
+    expect(box.getSnapshot().map((o) => o.id)).toEqual(['a'])
+    const aside = Object.keys(storage.docs).find((k) => k.startsWith('queue.unreadable.'))!
+    expect(JSON.parse(storage.docs[aside]).ops).toEqual([odd])
+  })
+
+  it('waits for the server\'s answer to be saved before the change leaves the saved queue', async () => {
+    const storage = memoryStorage()
+    const seen: number[] = []
+    let n = 0
+    const box = new Outbox({
+      storage, send: async () => ({ id: 't1' }), uuid: () => `s${++n}`,
+      onSent: async () => {
+        await new Promise((r) => setTimeout(r, 5)) // the cache being written
+        seen.push(JSON.parse(storage.docs['queue.json']).ops.length)
+      },
+    })
+    box.setUser(7)
+    await box.enqueue(patch('t1', { remarks: 'x' }))
+    await box.flush()
+    expect(seen).toEqual([1])
+    expect(JSON.parse(storage.docs['queue.json']).ops).toEqual([])
+  })
+})

@@ -14,12 +14,20 @@
  * - Safe to resend: a new trial carries an id made on the phone, a file a
  *   client_id; start, PATCH and PUT cubes are idempotent on the server. So a
  *   change that reached the server but whose answer was lost does no harm
- *   when replayed.
- * - Failures: no connection, a timeout, 5xx or 429 stop the replay and keep
- *   the change waiting (5xx gives up after a few tries, in case the server
- *   always refuses it). Any other refusal (400, 403, 404, 409, 413) marks the
- *   change as a sync problem with the server's message; later changes to the
- *   same trial wait behind it until the person retries or discards it.
+ *   when replayed. The same holds when the app is killed after the server
+ *   applied a change but before the queue was saved without it: it is sent
+ *   again on the next replay.
+ * - Failures: no connection, 5xx or 429 stop the replay and keep the change
+ *   waiting (5xx gives up after a few tries, in case the server always
+ *   refuses it). A timeout keeps the change waiting and skips only that
+ *   trial for the rest of the replay, so one slow upload does not hold up
+ *   the other trials. An answer that is not from the API (a hotel or site
+ *   Wi-Fi sign in page, a proxy) counts as no connection. Any other refusal
+ *   (400, 403, 404, 409, 413) marks the change as a sync problem with the
+ *   server's message; later changes to the same trial wait behind it until
+ *   the person retries or discards it. A new edit of the same step merges
+ *   into the refused change and puts it back in line, so the person can fix
+ *   it instead of discarding it.
  *   An ended session stops the replay until the person signs in again.
  * - Per user: each change records who made it; only the signed in person's
  *   changes are shown or sent.
@@ -49,6 +57,7 @@ export type OpInput =
   | { kind: 'patch_trial'; trialId: string; body: Record<string, unknown>; what?: string }
   | { kind: 'put_cubes'; trialId: string; age: string; body: CubesBody }
   | { kind: 'start_trial'; trialId: string }
+  /** uri: the kept file's name in the app's files folder (see fileKeeper); older entries hold a full path, of which only the name is used. */
   | { kind: 'upload_attachment'; trialId: string; clientId: string; name: string; type: string; size: number | null; uri: string }
 
 export type Op = OpBase & OpInput
@@ -67,8 +76,9 @@ export type FlushResult = { sent: number; failed: number; stopped: null | 'offli
 type Deps = {
   storage: Storage
   send: (op: Op) => Promise<unknown>
-  /** After the server accepted a change: store its answer, refresh lists. */
-  onSent?: (op: Op, result: unknown) => void
+  /** After the server accepted a change: store its answer, refresh lists. Awaited
+   * before the change leaves the saved queue, so the answer is saved first. */
+  onSent?: (op: Op, result: unknown) => void | Promise<void>
   /** After a change left the queue (sent or discarded): clean up its file. */
   onRemoved?: (op: Op, how: 'sent' | 'discarded') => void
   uuid: () => string
@@ -81,10 +91,21 @@ export const MAX_SERVER_ATTEMPTS = 5
 
 type Verdict = 'sent' | 'retry' | 'session' | 'fail'
 
+/** Codes the API client gives answers that did not come from the API (no API
+ * error body, or a body that is not JSON): a captive portal or a proxy. */
+const NOT_API = ['unexpected_response', 'bad_response']
+
+/** The request did not reach the API, or its answer did not come back: safe to send again later. */
+export function unreachable(e: unknown) {
+  return isApiError(e) && (e.status === 0 || NOT_API.includes(e.code))
+}
+
+const timedOut = (e: unknown) => isApiError(e) && e.status === 0 && e.code === 'timeout'
+
 export function classify(e: unknown, attempts: number): Exclude<Verdict, 'sent'> {
   if (e instanceof PermanentError) return 'fail'
   if (!isApiError(e)) return 'fail'
-  if (e.status === 0) return 'retry'
+  if (unreachable(e)) return 'retry'
   if (e.status === 401) return 'session'
   if (e.status >= 500 || e.status === 429 || e.status === 408) return attempts >= MAX_SERVER_ATTEMPTS ? 'fail' : 'retry'
   return 'fail'
@@ -106,6 +127,8 @@ export class Outbox {
   private writing: Promise<void> = Promise.resolve()
   private listeners = new Set<() => void>()
   private snapshot: Op[] = []
+  /** Bumped on every change to the queue, so a failed save only undoes its own change. */
+  private version = 0
   loaded = false
 
   constructor(private deps: Deps) {}
@@ -113,22 +136,30 @@ export class Outbox {
   private loading: Promise<void> | null = null
 
   /** Read the saved queue (once). Everything that changes the queue waits for
-   * this first, so a change made at launch never overwrites the saved queue. */
+   * this first, so a change made at launch never overwrites the saved queue.
+   * When the file cannot be read right now, this rejects and the queue stays
+   * unloaded (nothing is written over it); the next call tries again. */
   load(): Promise<void> {
-    this.loading ??= this.read()
+    this.loading ??= this.read().catch((e: unknown) => { this.loading = null; throw e })
     return this.loading
   }
 
-  /** A document that cannot be read is set aside, never silently lost. */
+  /** A document, or entries, that cannot be understood are set aside, never silently lost. */
   private async read() {
-    const text = await this.deps.storage.read(DOC).catch(() => null)
+    const text = await this.deps.storage.read(DOC)
     let ops: Op[] = []
     if (text) {
+      let all: unknown[] | null = null
       try {
         const doc = JSON.parse(text) as { v?: number; ops?: unknown }
-        ops = Array.isArray(doc.ops) ? (doc.ops as Op[]).filter(isOp) : []
+        all = Array.isArray(doc.ops) ? doc.ops : []
       } catch {
         await this.deps.storage.write(`queue.unreadable.${Date.now()}.json`, text)
+      }
+      if (all) {
+        ops = all.filter(isOp)
+        const unknown = all.filter((o) => !isOp(o))
+        if (unknown.length) await this.deps.storage.write(`queue.unreadable.${Date.now()}.json`, JSON.stringify({ v: 1, ops: unknown }))
       }
     }
     this.ops = ops
@@ -163,22 +194,31 @@ export class Outbox {
     return this.snapshot.some((o) => o.trialId === trialId)
   }
 
-  /** Add a change. Consecutive edits of the same trial step merge into one waiting change. */
+  /** Add a change. Consecutive edits of the same trial step merge into one waiting change.
+   * An edit merged into a refused change puts it back in line with the corrected content.
+   * If the queue cannot be saved, the change is taken back out and the call rejects. */
   async enqueue(input: OpInput): Promise<Op> {
     if (this.userId === null) throw new Error('No signed in user for the change queue')
     await this.load()
     const mine = this.ops.filter((o) => o.trialId === input.trialId && o.userId === this.userId)
     const last = mine[mine.length - 1]
-    const mergeable = last && last.state === 'pending' && last.id !== this.sendingId
-    if (mergeable && input.kind === 'patch_trial' && last.kind === 'patch_trial') {
-      last.body = { ...last.body, ...input.body }
-      last.what = input.what ?? last.what
-      await this.changed()
-      return last
-    }
-    if (mergeable && input.kind === 'put_cubes' && last.kind === 'put_cubes' && last.age === input.age) {
-      last.body = input.body
-      await this.changed()
+    const mergeable = last && last.id !== this.sendingId
+    const merge = mergeable && ((input.kind === 'patch_trial' && last.kind === 'patch_trial')
+      || (input.kind === 'put_cubes' && last.kind === 'put_cubes' && last.age === input.age))
+    if (merge) {
+      const before = { ...last }
+      if (input.kind === 'patch_trial' && last.kind === 'patch_trial') {
+        last.body = { ...last.body, ...input.body }
+        last.what = input.what ?? last.what
+      } else if (input.kind === 'put_cubes' && last.kind === 'put_cubes') {
+        last.body = input.body
+      }
+      if (last.state === 'failed') {
+        last.state = 'pending'
+        last.attempts = 0
+        delete last.error
+      }
+      await this.saveOrUndo(() => { Object.assign(last, before); if (!before.error) delete last.error })
       return last
     }
     const op = {
@@ -186,8 +226,24 @@ export class Outbox {
       state: 'pending', attempts: 0,
     } as Op
     this.ops.push(op)
-    await this.changed()
+    await this.saveOrUndo(() => { this.ops = this.ops.filter((o) => o !== op) })
     return op
+  }
+
+  /** Save after a change. On failure, take the change back (unless something
+   * changed the queue since, which then carries it) and save that state. */
+  private async saveOrUndo(undo: () => void) {
+    const saving = this.changed()
+    const mine = this.version
+    try {
+      await saving
+    } catch (e) {
+      if (this.version === mine) {
+        undo()
+        await this.quietly(this.changed())
+      }
+      throw e
+    }
   }
 
   /** Send waiting changes in order. Only one replay runs at a time. */
@@ -198,22 +254,24 @@ export class Outbox {
 
   get busy() { return this.flushing !== null }
 
-  private next(): Op | undefined {
+  /** The oldest change of the first trial that can go, skipping trials that timed out in this replay. */
+  private next(skip: Set<string>): Op | undefined {
     const seen = new Set<string>()
     for (const op of this.ops) {
       if (op.userId !== this.userId) continue
       if (seen.has(op.trialId)) continue
       seen.add(op.trialId)
-      if (op.state === 'pending') return op
+      if (op.state === 'pending' && !skip.has(op.trialId)) return op
     }
     return undefined
   }
 
   private async run(): Promise<FlushResult> {
     const out: FlushResult = { sent: 0, failed: 0, stopped: null }
-    await this.load().catch(() => undefined)
+    try { await this.load() } catch { return out } // the saved queue cannot be read yet: send nothing
     if (this.userId === null) return out
-    for (let op = this.next(); op; op = this.next()) {
+    const slow = new Set<string>()
+    for (let op = this.next(slow); op; op = this.next(slow)) {
       this.sendingId = op.id
       this.changed(false)
       let verdict: Verdict
@@ -226,11 +284,14 @@ export class Outbox {
         error = e
         verdict = classify(e, op.attempts + 1)
       }
+      if (verdict === 'sent' && this.ops.includes(op)) {
+        // The server's answer is stored (and saved) before the change leaves the overlay and the
+        // saved queue, so screens never flash empty and a restart never shows the older values.
+        try { await this.deps.onSent?.(op, result) } catch { /* a cache update must not stop the replay */ }
+      }
       this.sendingId = null
       if (!this.ops.includes(op)) { this.changed(false); continue } // discarded while sending
       if (verdict === 'sent') {
-        // The server's answer is stored before the change leaves the overlay, so screens never flash empty.
-        try { this.deps.onSent?.(op, result) } catch { /* a cache update must not stop the replay */ }
         this.ops = this.ops.filter((o) => o !== op)
         await this.quietly(this.changed())
         out.sent += 1
@@ -246,9 +307,15 @@ export class Outbox {
         continue
       }
       await this.quietly(this.changed())
-      out.stopped = verdict === 'session' ? 'session' : isApiError(error) && error.status === 0 ? 'offline' : 'server'
+      if (verdict === 'retry' && timedOut(error)) {
+        // Slow, not refused: keep it waiting, leave this trial for now and carry on with the others.
+        slow.add(op.trialId)
+        continue
+      }
+      out.stopped = verdict === 'session' ? 'session' : unreachable(error) ? 'offline' : 'server'
       break
     }
+    if (!out.stopped && slow.size) out.stopped = 'offline'
     return out
   }
 
@@ -279,6 +346,7 @@ export class Outbox {
   }
 
   private changed(persist = true): Promise<void> {
+    if (persist) this.version += 1
     this.snapshot = this.userId === null ? [] : this.ops.filter((o) => o.userId === this.userId).map((o) => ({ ...o }))
     this.listeners.forEach((l) => l())
     if (!persist) return Promise.resolve()

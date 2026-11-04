@@ -87,6 +87,13 @@ describe('errors', () => {
     await expect(api('/x/')).rejects.toMatchObject({ status: 429, message: MESSAGES.throttled })
   })
 
+  it('marks an answer without the API error shape (a Wi-Fi sign in page, a proxy) so it is not taken as a refusal', async () => {
+    fetchMock.mockResolvedValueOnce(text(403))
+    await expect(api('/x/')).rejects.toMatchObject({ status: 403, code: 'unexpected_response', message: MESSAGES.failed })
+    fetchMock.mockResolvedValueOnce(text(200))
+    await expect(api('/x/')).rejects.toMatchObject({ status: 200, code: 'bad_response' })
+  })
+
   it('treats an unreadable success body as a server problem, not a crash', async () => {
     fetchMock.mockResolvedValueOnce(text(200))
     await expect(api('/x/')).rejects.toBeInstanceOf(ApiError)

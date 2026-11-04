@@ -61,12 +61,17 @@ export async function cachedUser(storage: Storage, now = Date.now()): Promise<Us
   return doc && now - doc.savedAt <= CACHE_MAX_AGE_MS ? doc.user : null
 }
 
-const active = new Set<{ stop: () => void }>()
+const active = new Set<{ stop: () => void; saveNow: () => Promise<unknown> }>()
 
 /** Sign out: stop saving and delete the saved data, so the next person never sees it. */
 export async function clearCache(storage: Storage) {
   active.forEach((p) => p.stop())
   await storage.remove(DOC)
+}
+
+/** Save now (a change just synced: its answer must be saved before the change leaves the saved queue). */
+export async function saveCacheNow() {
+  await Promise.all([...active].map((p) => p.saveNow()))
 }
 
 /** Save a moment after the cache settles. Returns the stop function and a save-now for going to the background. */

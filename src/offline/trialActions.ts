@@ -7,27 +7,39 @@
  */
 import type { QueryClient } from '@tanstack/react-query'
 
-import { isApiError } from '@/api/errors'
 import type { PickedFile } from '@/features/trials/attachments'
 import type { Project, Trial } from '@/shared/types'
 
 import { isOnline } from './connectivity'
 import { kick, labelsFrom, newId, outbox, sendOp, storeResult } from './outbox'
 import { trialView } from './overlay'
-import type { OpInput } from './queue'
+import { unreachable, type OpInput } from './queue'
 import { fileKeeper } from './storage'
 
 export type Saved = { trial: Trial; queued: boolean }
-
-/** No connection or a timeout: the change may or may not have arrived, and is safe to send again. */
-const unreachable = (e: unknown) => isApiError(e) && e.status === 0
 
 /** The trial as this phone shows it now. */
 export function currentView(qc: QueryClient, trialId: string): Trial | undefined {
   return trialView(qc.getQueryData<Trial>(['trial', trialId]), outbox.forTrial(trialId), labelsFrom(qc))
 }
 
-async function sendOrQueue(qc: QueryClient, op: OpInput): Promise<Saved> {
+/** The last change of each trial still being saved, so the next one waits for it. */
+const saving = new Map<string, Promise<unknown>>()
+
+/** A trial's changes go one after another: a direct save that times out (and
+ * so joins the queue) must never land behind a later save of the same trial,
+ * or the queue would replay the older value over the newer one. */
+function sendOrQueue(qc: QueryClient, op: OpInput): Promise<Saved> {
+  const run = (saving.get(op.trialId) ?? Promise.resolve()).catch(() => undefined).then(() => saveNow(qc, op))
+  saving.set(op.trialId, run)
+  const done = () => { if (saving.get(op.trialId) === run) saving.delete(op.trialId) }
+  run.then(done, done)
+  return run
+}
+
+async function saveNow(qc: QueryClient, op: OpInput): Promise<Saved> {
+  // Waiting changes must be known (the saved queue read) before deciding to send directly.
+  await outbox.load().catch(() => undefined)
   if (isOnline() && !outbox.hasWaiting(op.trialId)) {
     try {
       const trial = (await sendOp(op)) as Trial
