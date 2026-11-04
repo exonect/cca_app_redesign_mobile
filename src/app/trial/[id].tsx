@@ -1,5 +1,3 @@
-import { Header, Screen, Body } from '@/ui/kit'
+import { TrialScreen } from '@/features/trials/TrialScreen'
 
-export default function TrialScreen() {
-  return <Screen header={<Header title="Trial" />}><Body>Being built.</Body></Screen>
-}
+export default TrialScreen
