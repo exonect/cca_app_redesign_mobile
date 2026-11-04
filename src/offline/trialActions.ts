@@ -73,6 +73,11 @@ export const saveCubes = (qc: QueryClient, trialId: string, age: string,
   body: { cubes: { weight: string | null; load: string | null }[]; tested_on?: string }) =>
   sendOrQueue(qc, { kind: 'put_cubes', trialId, age, body })
 
+/** Delete one age's saved cube set (legacy cube row delete), now or when back online.
+ * It rides the cube queue entry of that age, so a later save of the age replaces it. */
+export const deleteCubes = (qc: QueryClient, trialId: string, age: string) =>
+  sendOrQueue(qc, { kind: 'put_cubes', trialId, age, body: { cubes: [], remove: true } })
+
 /** Start: the server refuses an incomplete trial (legacy Create Trial rules), so a
  * start that would be queued is checked on the phone first, on the trial with its
  * waiting changes; one that still fails on sync becomes a sync problem. */

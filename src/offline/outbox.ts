@@ -37,7 +37,9 @@ export function sendOp(op: OpInput): Promise<unknown> {
     case 'patch_trial':
       return api<Trial>(`/trials/${op.trialId}/`, { method: 'PATCH', body: op.body })
     case 'put_cubes':
-      return api<Trial>(`/trials/${op.trialId}/cubes/${op.age}/`, { method: 'PUT', body: op.body })
+      return op.body.remove
+        ? api<Trial>(`/trials/${op.trialId}/cubes/${op.age}/`, { method: 'DELETE' })
+        : api<Trial>(`/trials/${op.trialId}/cubes/${op.age}/`, { method: 'PUT', body: op.body })
     case 'start_trial':
       return api<Trial>(`/trials/${op.trialId}/start/`, { method: 'POST' })
     case 'upload_attachment': {

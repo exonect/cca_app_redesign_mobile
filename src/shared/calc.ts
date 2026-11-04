@@ -53,8 +53,14 @@ export function analyse(rows: { sieve: string; retained: unknown }[]) {
     .sort((a, b) => ORDER[a.sieve] - ORDER[b.sieve])
   const complete = parsed.length > 0 && parsed.every((r) => r.retained !== null && r.retained >= 0)
   const total = parsed.reduce((s, r) => s + (r.retained ?? 0), 0)
-  if (!complete || total === 0) {
+  if (!complete) {
     return { rows: parsed.map((r) => ({ ...r, cum: null, cumPct: null, passing: null })) as SieveOut[], total: r2(total), complete: false, fm: null as number | null }
+  }
+  if (total === 0) {
+    // Legacy lab sheet: every weight entered and all 0 shows 0 % retained and 100 % passing on every sieve.
+    const zero: SieveOut[] = parsed.map((r) => ({ sieve: r.sieve, retained: r.retained, cum: 0, cumPct: 0, passing: 100 }))
+    const keys = new Set(parsed.map((r) => r.sieve))
+    return { rows: zero, total: 0, complete: true, fm: FM_SIEVES.every((k) => keys.has(k)) ? 0 : null as number | null }
   }
   let running = 0
   const out: SieveOut[] = parsed.map((r) => {
@@ -93,12 +99,19 @@ export function combine(proportions: Record<string, unknown>, passing: Record<st
   return { points, error: null as string | null }
 }
 
+/** Legacy all in grading table: Avg of a sieve's limits = (min + max) / 2. */
+export const gradingAverage = ([min, max]: [number, number]) => (min + max) / 2
+
 // --- Mix design -------------------------------------------------------------------
 export const AGGREGATES = ['20mm', '10mm', 'river_sand', 'crushed_sand']
 export const BINDERS = ['cement', 'fly_ash', 'ggbs', 'alcofine', 'microsilica']
 /** Mineral admixtures that are not binders (legacy master value Fiber): no correction, not in W/C. */
 export const OTHER_MINERALS = ['fiber']
-export const MATERIALS = [...BINDERS, ...OTHER_MINERALS, ...AGGREGATES, 'water', 'admixture_1', 'admixture_2']
+/** Mineral admixtures as the legacy mix table grouped them (source type mineral_admixture). */
+export const MINERAL_ADMIXTURES = ['fly_ash', 'ggbs', 'alcofine', 'microsilica', ...OTHER_MINERALS]
+/** Row order on screens and in the PDF, as the legacy app: mineral admixtures first, then cement, 20 mm,
+ * 10 mm, river sand, crushed sand, Admixture I, Admixture II and water last (backend cca/calc/mix.py). */
+export const MATERIALS = [...MINERAL_ADMIXTURES, 'cement', ...AGGREGATES, 'admixture_1', 'admixture_2', 'water']
 export const WC_BINDERS = ['cement', 'fly_ash', 'ggbs', 'alcofine'] // legacy rule, open question Q4
 export const MATERIAL_LABEL: Record<string, string> = {
   cement: 'Cement', fly_ash: 'Fly ash', ggbs: 'GGBS', alcofine: 'Alcofine', microsilica: 'Microsilica', fiber: 'Fiber',
@@ -177,6 +190,15 @@ function decimalPlaces(v: unknown): number {
   return frac.replace(/0+$/, '').length
 }
 
+/** Raw material percentages: 2 decimals, or 3 when the third is used (legacy trace amounts such as 0.005 %). */
+export const RECIPE_PLACES = 3
+export function rp(x: number): number {
+  const sign = x < 0 ? -1 : 1
+  return (sign * Math.round(Math.abs(x) * 1000 + 1e-9)) / 1000
+}
+/** A recipe percentage as text: "20.50", "0.005". */
+export const fp = (x: number | null | undefined) => (x === null || x === undefined ? '' : rp(x) === r2(x) ? r2(x).toFixed(2) : rp(x).toFixed(3))
+
 export function withBalance(components: Record<string, unknown>) {
   const parts: Record<string, number> = {}
   const errors: string[] = []
@@ -191,12 +213,12 @@ export function withBalance(components: Record<string, unknown>) {
     if (x < 0) { errors.push(`${c} cannot be negative.`); continue }
     if (x > 100) { errors.push(`${c} cannot be more than 100%.`); continue }
     if (c in parts) { errors.push(`${c} is listed twice.`); continue }
-    if (decimalPlaces(v) > 2) { errors.push(`${c} can have up to 2 decimal places.`); continue }
-    parts[c] = r2(x)
+    if (decimalPlaces(v) > RECIPE_PLACES) { errors.push(`${c} can have up to ${RECIPE_PLACES} decimal places.`); continue }
+    parts[c] = rp(x)
   }
   const others = Object.values(parts).reduce((s, x) => s + x, 0)
   let balance = 100 - others
-  if (r2(balance) < 0) { errors.push(`Raw materials total ${f2(others)}%, which is over 100%. Reduce them so J000 is 0 or more.`); balance = 0 }
-  parts.J000 = r2(balance)
-  return { parts, errors, total: r2(Object.values(parts).reduce((s, x) => s + x, 0)) }
+  if (rp(balance) < 0) { errors.push(`Raw materials total ${f2(others)}%, which is over 100%. Reduce them so J000 is 0 or more.`); balance = 0 }
+  parts.J000 = rp(balance)
+  return { parts, errors, total: rp(Object.values(parts).reduce((s, x) => s + x, 0)) }
 }

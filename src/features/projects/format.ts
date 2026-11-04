@@ -47,6 +47,14 @@ export function num(v: string | number | null | undefined, digits = 2) {
   return Number.isInteger(n) ? String(n) : n.toFixed(digits)
 }
 
+/** Project potential in Cr: like num, but a legacy potential with 3 or 4 decimals keeps them ("0.0025"). */
+export function crore(v: string | number | null | undefined) {
+  if (v === null || v === undefined || v === '') return ''
+  const n = Number(v)
+  if (!Number.isFinite(n)) return String(v)
+  return Math.abs(Number(n.toFixed(2)) - n) < 1e-9 ? num(n) : String(Number(n.toFixed(4)))
+}
+
 export function initials(name: string | null | undefined) {
   return (name ?? '').split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]).join('').toUpperCase() || 'CCA'
 }

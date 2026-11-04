@@ -1,4 +1,4 @@
-import { n, withBalance } from '@/shared/calc'
+import { n, RECIPE_PLACES, withBalance } from '@/shared/calc'
 import type { Recipe } from '@/shared/types'
 
 export type Row = { code: string; pct: string }
@@ -29,7 +29,7 @@ export function rowProblem(r: Row): string | null {
   const x = n(r.pct)
   if (x === null || x < 0) return null
   if (x > 100) return `${code} cannot be more than 100%.`
-  if (Math.abs(x * 100 - Math.round(x * 100)) > 1e-6) return `${code} can have up to 2 decimal places.`
+  if (Math.abs(x * 10 ** RECIPE_PLACES - Math.round(x * 10 ** RECIPE_PLACES)) > 1e-6) return `${code} can have up to ${RECIPE_PLACES} decimal places.`
   return null
 }
 

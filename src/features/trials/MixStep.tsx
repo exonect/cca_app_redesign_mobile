@@ -8,7 +8,7 @@ import Svg, { Polyline } from 'react-native-svg'
 
 import { toOptions, useLookups, useProducts } from '@/api/hooks'
 import { useAuth } from '@/auth/AuthProvider'
-import { admixtureQty, AGGREGATES, BINDERS, cementitious, f2, MATERIAL_LABEL, MATERIALS, mix, n, OTHER_MINERALS, type MixLine } from '@/shared/calc'
+import { admixtureQty, AGGREGATES, BINDERS, cementitious, f2, MATERIAL_LABEL, MATERIALS, MINERAL_ADMIXTURES, mix, n, OTHER_MINERALS, type MixLine } from '@/shared/calc'
 import type { Lookup, Trial } from '@/shared/types'
 import { Banner, Field, Picker, Screen, Small, TextField } from '@/ui/kit'
 import { color, font, TOUCH } from '@/ui/theme'
@@ -20,7 +20,7 @@ import { onNewFormulation, takeNewFormulation } from './newFormulation'
 import { CellInput, cell, Output, Section, SourceNote, StepActions, TableHead, TickIcon, WarnIcon, WarnText } from './parts'
 import { useStepForm, useWorkspace } from './workspace'
 
-const MINERALS = ['fly_ash', 'ggbs', 'alcofine', 'microsilica', ...OTHER_MINERALS]
+const MINERALS = MINERAL_ADMIXTURES
 const COARSE = ['20mm', '10mm']
 const FINE = ['river_sand', 'crushed_sand']
 

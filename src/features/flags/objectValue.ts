@@ -1,6 +1,6 @@
 /** Same rules as the web app (src/features/flags/objectValue.ts there). Editing a flag that covers a whole object (value_json): aggregate proportions,
  * a recipe composition or a project's cementitious contents. Pure helpers for FlagBanner. */
-import { withBalance } from '@/shared/calc'
+import { fp, RECIPE_PLACES, withBalance } from '@/shared/calc'
 import type { CorrectedValue, RecordFlag as FlagBrief } from '@/shared/typesExt'
 
 export type ObjectKind = 'proportions' | 'components' | 'list' | 'map'
@@ -55,8 +55,8 @@ export function totals(kind: ObjectKind, rows: ObjectRow[]): { total: string; ba
     const { parts, total } = withBalance(Object.fromEntries(others.map((r) => [r.key, r.value.trim()])))
     const sum = others.reduce((s, r) => s + Number(r.value.trim()), 0)
     return {
-      total: f2(sum > 100 ? sum : total),
-      balance: f2(parts[BALANCE] ?? 0),
+      total: fp(sum > 100 ? sum : total),
+      balance: fp(parts[BALANCE] ?? 0),
       problem: sum > 100 ? `Raw materials total ${f2(sum)}%, which is over 100%. Reduce them so ${BALANCE} is 0 or more.` : undefined,
     }
   }
@@ -72,7 +72,9 @@ export function rowProblems(kind: ObjectKind, rows: ObjectRow[]): Record<string,
     if (v === '') { if (kind === 'list') out[r.key] = 'Enter a number, or remove this row.'; continue }
     if (!NUMBER.test(v)) { out[r.key] = 'Enter a number.'; continue }
     if (kind === 'list' && !/^\d+$/.test(v)) out[r.key] = 'Enter a whole number.'
-    else if (kind !== 'list' && (v.split('.')[1] ?? '').replace(/0+$/, '').length > 2) out[r.key] = 'Use up to 2 decimal places.'
+    else if (kind !== 'list' && (v.split('.')[1] ?? '').replace(/0+$/, '').length > (kind === 'components' ? RECIPE_PLACES : 2)) {
+      out[r.key] = `Use up to ${kind === 'components' ? RECIPE_PLACES : 2} decimal places.`
+    }
   }
   return out
 }

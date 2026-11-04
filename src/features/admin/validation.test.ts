@@ -46,15 +46,16 @@ describe('final server rules for master data and recipes', () => {
     expect(lookupValueProblem('-1', false)).toBeNull()
   })
 
-  it('refuses recipe percentages over 100, more than 2 decimals and codes over 20 characters', () => {
+  it('refuses recipe percentages over 100, more than 3 decimals (legacy trace amounts) and codes over 20 characters', () => {
     expect(rowProblem({ code: 'R101', pct: '100.5' })).toBe('R101 cannot be more than 100%.')
-    expect(rowProblem({ code: 'R101', pct: '1.255' })).toBe('R101 can have up to 2 decimal places.')
+    expect(rowProblem({ code: 'R101', pct: '1.2555' })).toBe('R101 can have up to 3 decimal places.')
+    expect(rowProblem({ code: 'R101', pct: '0.005' })).toBeNull()
     expect(rowProblem({ code: 'R101', pct: '1.250' })).toBeNull()
     expect(rowProblem({ code: 'R101', pct: '0.29' })).toBeNull()
     expect(rowProblem({ code: 'X'.repeat(21), pct: '1' })).toBe('Raw material codes are 1 to 20 characters.')
-    const p = preview([{ code: 'R101', pct: '12.345' }])
+    const p = preview([{ code: 'R101', pct: '12.3456' }])
     expect(p.exact).toBe(false)
-    expect(p.errors[0]).toBe('R101 can have up to 2 decimal places.')
+    expect(p.errors[0]).toBe('R101 can have up to 3 decimal places.')
     expect(preview([{ code: 'R101', pct: '12.34' }]).exact).toBe(true)
   })
 })

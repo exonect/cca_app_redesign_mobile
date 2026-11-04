@@ -36,6 +36,15 @@ export const SCC_LIST: Record<SccKey, string> = {
   v_funnel: 'scc_v_funnel', t500: 'scc_t500', l_box: 'scc_l_box', u_box: 'scc_u_box',
 }
 /** The number a list value stands for: "9 sec" is 9, "1.0" is 1; null when it holds none. */
+/** Slump Flow master values sorted as the legacy dropdown: by number, non numbers first. */
+export function sortSlumpList<T extends { value: string }>(list: T[]): T[] {
+  return [...list].sort((a, b) => {
+    const x = Number.parseFloat(a.value), y = Number.parseFloat(b.value)
+    if (Number.isNaN(x) || Number.isNaN(y)) return Number.isNaN(x) ? (Number.isNaN(y) ? 0 : -1) : 1
+    return x - y
+  })
+}
+
 export function sccNumber(value: string): string | null {
   const m = /^\s*(\d+(?:\.\d+)?|\.\d+)/.exec(value)
   return m ? String(Number(m[1])) : null

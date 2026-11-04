@@ -8,7 +8,7 @@ import { resetConnectivity, setNetwork } from './connectivity'
 import { bindQueryClient, outbox } from './outbox'
 import { trialView } from './overlay'
 import { fileKeeper, offlineStorage } from './storage'
-import { CLOSE_OFFLINE, CLOSE_WAITING, createTrial, queueFiles, readyToClose, saveCubes, saveTrialPatch, STARTED_READ_ONLY, startTrial } from './trialActions'
+import { CLOSE_OFFLINE, CLOSE_WAITING, createTrial, deleteCubes, queueFiles, readyToClose, saveCubes, saveTrialPatch, STARTED_READ_ONLY, startTrial } from './trialActions'
 
 const mockApi = jest.fn()
 jest.mock('@/api/client', () => ({
@@ -159,6 +159,28 @@ describe('offline', () => {
     const view = trialView(undefined, outbox.forTrial(trial.id))!
     expect(view.actions.edit).toBe(false)
     expect(view.cube_sets[0]).toMatchObject({ age: '1d', tested_on: '2026-11-05' })
+  })
+
+  it('deletes a saved cube set on the phone and sends DELETE when back online (legacy cube row delete)', async () => {
+    const saved = { id: 't6', project: 'p1', status: 'in_progress', attachments: [], actions: {},
+      cube_sets: [{ age: '7d', age_label: '7 days', cubes: [{ weight: '8.4', load: '700' }], average: '31.11', tested_on: null }],
+      results: { sieves: {}, grading: [], mix: null, cubes: { '7d': { rows: [], average: '31.11' } }, checks: [], errors: [] } }
+    qc.setQueryData(['trial', 't6'], saved)
+    goOffline()
+    const r = await deleteCubes(qc, 't6', '7d')
+    expect(r.queued).toBe(true)
+    expect(r.trial.cube_sets).toEqual([])
+    expect(r.trial.results.cubes['7d']).toBeUndefined()
+    // A later save of the same age replaces the waiting delete.
+    await saveCubes(qc, 't6', '7d', { cubes: [{ weight: '8.1', load: '650' }] })
+    expect(outbox.forTrial('t6')).toHaveLength(1)
+    expect(outbox.forTrial('t6')[0]).toMatchObject({ kind: 'put_cubes', body: { cubes: [{ weight: '8.1', load: '650' }] } })
+    await deleteCubes(qc, 't6', '7d')
+    mockApi.mockResolvedValue({ ...saved, cube_sets: [] })
+    resetConnectivity()
+    await outbox.flush()
+    expect(mockApi.mock.calls.map(([path, opts]) => `${opts?.method} ${path}`)).toEqual(['DELETE /trials/t6/cubes/7d/'])
+    expect(outbox.getSnapshot()).toEqual([])
   })
 
   it('refuses a step edit on a trial the server says is in progress, without sending it', async () => {

@@ -15,10 +15,14 @@ describe('project form model', () => {
   })
 
   it('checks formats like the server', () => {
-    const e = validate({ ...EMPTY, sfdc_no: '49318', contact_phone: '98220', potential_cr: '2.505' })
+    const e = validate({ ...EMPTY, sfdc_no: '49318', contact_phone: '98220', potential_cr: '2.50055' })
     expect(e.sfdc_no).toMatch('6 digits')
     expect(e.contact_phone).toMatch('10 digit')
-    expect(e.potential_cr).toMatch('2 decimals')
+    expect(e.potential_cr).toMatch('4 decimals')
+    // Legacy potentials such as 0.0025 Cr are taken and shown as entered.
+    expect(validate({ ...EMPTY, potential_cr: '0.0025' }).potential_cr).toBeUndefined()
+    const { crore } = jest.requireActual<typeof import('./format')>('./format')
+    expect([crore('0.0025'), crore('6.7500'), crore('6')]).toEqual(['0.0025', '6.75', '6'])
     expect(validate({ ...EMPTY, sfdc_no: '049318' })).toEqual({})
   })
 

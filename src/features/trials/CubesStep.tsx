@@ -5,10 +5,10 @@
  * added on demand. Test dates count from the cast date. */
 import { useQueryClient } from '@tanstack/react-query'
 import { useState, type ReactNode } from 'react'
-import { Pressable, ScrollView, Text, View } from 'react-native'
+import { Alert, Pressable, ScrollView, Text, View } from 'react-native'
 
 import { fieldErrors } from '@/api/client'
-import { saveCubes } from '@/offline/trialActions'
+import { deleteCubes, saveCubes } from '@/offline/trialActions'
 import { AGES, cubeAverage, f2, n, STANDARD_AGES, strength, testDue } from '@/shared/calc'
 import type { Trial } from '@/shared/types'
 import { Banner, Button, Screen, Small, TextField } from '@/ui/kit'
@@ -111,6 +111,34 @@ export function CubesStep({ canEdit, banners }: { canEdit: boolean; banners: Rea
     }
   }
 
+  // Legacy: a saved cube row could be deleted. Same rights as saving cubes, after a confirmation;
+  // offline it waits on the phone like a save.
+  function confirmDeleteAge(age: string) {
+    const l = AGES[age][0]
+    Alert.alert(`Delete the ${l} cube results?`,
+      `The saved weights, loads and test date for ${l} are removed and the average is recalculated. This cannot be undone.`, [
+        { text: 'Keep them', style: 'cancel' },
+        { text: `Delete ${l}`, style: 'destructive', onPress: () => { void deleteAge(age) } },
+      ])
+  }
+  async function deleteAge(age: string) {
+    setErrors((e) => ({ ...e, [age]: '' }))
+    setSavingAge(age)
+    try {
+      const { trial: t, queued } = await deleteCubes(qc, trial.id, age)
+      if (!queued) accept(t)
+      setForms((x) => ({ ...x, [age]: ageForm(t, age) }))
+      notify(queued ? { tone: 'info', text: queuedNote(`${AGES[age][0]} cube results deleted`) } : { tone: 'ok', text: `${AGES[age][0]} cube results deleted` })
+    } catch (e) {
+      const msg = saveError(e, fieldErrors(e))
+      setErrors((x) => ({ ...x, [age]: msg }))
+      reload(e)
+      notify({ tone: 'error', text: `${AGES[age][0]}: ${msg}` })
+    } finally {
+      setSavingAge(null)
+    }
+  }
+
   // One saver for every age with unsaved results, so Next and the leave guard cover them all.
   useSaver('cubes', dirtyAges.length > 0, async () => {
     for (const a of dirtyAges) if (!(await saveAge(a))) return false
@@ -200,6 +228,7 @@ export function CubesStep({ canEdit, banners }: { canEdit: boolean; banners: Rea
 
       <AgeCard age={selected} form={formFor(selected)} dirty={selDirty} canEdit={canEdit} target={target} error={errors[selected]}
         onChange={(i, k, v) => setRow(selected, i, k, v)} onTestedOn={(v) => setTestedOn(selected, v)}
+        onDelete={canEdit && saved.includes(selected) ? () => confirmDeleteAge(selected) : undefined} deleting={savingAge === selected}
         onRemove={added.includes(selected) && !saved.includes(selected) ? () => {
           setAdded((x) => x.filter((y) => y !== selected))
           setForms((x) => { const { [selected]: _, ...rest } = x; return rest })
@@ -225,9 +254,10 @@ export function CubesStep({ canEdit, banners }: { canEdit: boolean; banners: Rea
   )
 }
 
-function AgeCard({ age, form, dirty, canEdit, target, error, onChange, onTestedOn, onRemove }: {
+function AgeCard({ age, form, dirty, canEdit, target, error, onChange, onTestedOn, onRemove, onDelete, deleting }: {
   age: string; form: AgeForm; dirty: boolean; canEdit: boolean; target: { value: number; age: string } | null; error?: string
   onChange: (i: number, k: keyof CubeEntry, v: string) => void; onTestedOn: (v: string) => void; onRemove?: () => void
+  onDelete?: () => void; deleting?: boolean
 }) {
   const { trial } = useWorkspace()
   const label = AGES[age][0]
@@ -243,6 +273,7 @@ function AgeCard({ age, form, dirty, canEdit, target, error, onChange, onTestedO
           {label.replace(/s$/, '')} test{due ? `, ${shortDate(due)}` : ''}
         </Text>
         {onRemove ? <Button title="Remove" variant="tertiary" accessibilityLabel={`Remove ${label}`} onPress={onRemove} style={{ flexGrow: 0, paddingHorizontal: 4 }} /> : null}
+        {onDelete ? <Button title="Delete" variant="tertiary" accessibilityLabel={`Delete ${label}`} onPress={onDelete} busy={deleting} style={{ flexGrow: 0, paddingHorizontal: 4 }} /> : null}
       </View>
       <TableHead cols={['Cube', 'Weight, kg', 'Load, kN', 'N/mm²']} template={COLS} />
       {form.rows.slice(0, 3).map((r, i) => (

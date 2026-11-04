@@ -20,7 +20,7 @@ import { color, font, radius, TOUCH } from '@/ui/theme'
 import { invalidateProject, projectKeys, refreshAfterRefusal, storeProject, useProject, useProjectEvents, useProjectTrials } from './api'
 import { AssignCtSheet } from './AssignCtSheet'
 import { CompleteSheet } from './CompleteSheet'
-import { date, num, shortDate } from './format'
+import { crore, date, num, shortDate } from './format'
 import { useNotice, useRefresh } from './hooks'
 import { ConfirmSheet, Notice, NoteSheet, Sheet } from './Sheet'
 import { goBack } from './TabHeader'
@@ -301,7 +301,7 @@ function CustomerCard({ p }: { p: Project }) {
         ['Sales Person', p.sales_person?.name ?? ''],
         ['CT', p.ct?.name ?? (p.status === 'draft' ? '' : 'Unassigned')],
         ['Region', p.region?.value ?? ''],
-        ['Potential', p.potential_cr === null ? '' : `₹${num(p.potential_cr)} Cr`],
+        ['Potential', p.potential_cr === null ? '' : `₹${crore(p.potential_cr)} Cr`],
         ['Price, bulk', p.selling_basic_price === null ? '' : `${num(p.selling_basic_price)} INR/kg`],
         ['Price, barrel', p.bulk_and_barrel === null ? '' : `${num(p.bulk_and_barrel)} INR/kg`],
         ['Admixture base', p.admixture_base?.value ?? 'None'],

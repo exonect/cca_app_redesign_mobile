@@ -50,8 +50,9 @@ type OpBase = {
   error?: SyncError
 }
 
-/** tested_on: the actual test date (yyyy-mm-dd), left out to keep the stored one. */
-export type CubesBody = { cubes: { weight: string | null; load: string | null }[]; tested_on?: string }
+/** tested_on: the actual test date (yyyy-mm-dd), left out to keep the stored one.
+ * remove: delete this age's saved set instead (legacy cube row delete); sent as DELETE. */
+export type CubesBody = { cubes: { weight: string | null; load: string | null }[]; tested_on?: string; remove?: true }
 
 export type OpInput =
   | { kind: 'create_trial'; trialId: string; project: string; projectName: string; customerName: string }

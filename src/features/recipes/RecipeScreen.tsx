@@ -9,7 +9,7 @@ import { api, ApiError, fieldErrors } from '@/api/client'
 import { errorMessage } from '@/api/errors'
 import { useLookups } from '@/api/hooks'
 import { useAuth } from '@/auth/AuthProvider'
-import { f2 } from '@/shared/calc'
+import { fp } from '@/shared/calc'
 import type { Recipe } from '@/shared/types'
 import type { RecipeWithLock } from '@/shared/typesExt'
 import { Banner, Body, Button, Card, Chips, ErrorState, Field, H1, Loading, NumberField, Picker, Small, Strong, TextField } from '@/ui/kit'
@@ -376,13 +376,13 @@ export function CompositionEditor({ rows, onChange, error, showRowErrors }: { ro
       </Field>
       <View style={{ flexDirection: 'row', alignItems: 'center', minHeight: 44, paddingHorizontal: 10, borderRadius: radius.field, backgroundColor: color.head }}>
         <Strong style={{ flex: 1 }}>J000 <Text style={{ fontFamily: font.regular, color: color.muted }}>balance, computed</Text></Strong>
-        <Strong>{f2(p.balance)}</Strong>
+        <Strong>{fp(p.balance)}</Strong>
       </View>
       <View style={{ flexDirection: 'row', alignItems: 'center', minHeight: 44, borderTopWidth: 2, borderColor: color.ink, paddingTop: 6 }}>
         <Text style={{ flex: 1, fontFamily: font.condBold, fontSize: 18, color: color.ink }}>Total</Text>
-        <View accessibilityLiveRegion="polite" accessibilityLabel={`Total ${f2(p.total)} percent`} testID="recipe-total"
+        <View accessibilityLiveRegion="polite" accessibilityLabel={`Total ${fp(p.total)} percent`} testID="recipe-total"
           style={{ height: 32, paddingHorizontal: 12, borderRadius: 16, justifyContent: 'center', backgroundColor: totalTone.bg }}>
-          <Text style={{ fontFamily: font.bold, fontSize: 15, color: totalTone.fg }}>{f2(p.total)}</Text>
+          <Text style={{ fontFamily: font.bold, fontSize: 15, color: totalTone.fg }}>{fp(p.total)}</Text>
         </View>
       </View>
       {over ? <Text accessibilityLiveRegion="assertive" style={{ fontFamily: font.semibold, fontSize: 13, color: color.error }}>{over}</Text> : null}

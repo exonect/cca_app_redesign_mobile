@@ -1,5 +1,5 @@
 // Same design figures as the backend tests (tests/calc/test_calc.py).
-import { admixtureQty, analyse, cementitious, combine, cubeAverage, mix, passingMap, strength, testDue, withBalance } from './calc'
+import { admixtureQty, analyse, cementitious, combine, cubeAverage, fp, gradingAverage, MATERIALS, mix, passingMap, strength, testDue, withBalance } from './calc'
 
 const CRUSHED = [['4.75', 30], ['2.36', 160], ['1.18', 220], ['0.6', 180], ['0.3', 190], ['0.15', 120], ['0.075', 70], ['pan', 30]]
   .map(([sieve, retained]) => ({ sieve: String(sieve), retained }))
@@ -22,6 +22,17 @@ describe('sieve', () => {
   it('computes nothing until the sheet is complete', () => {
     expect(analyse([...CRUSHED.slice(0, -1), { sieve: 'pan', retained: '' }]).complete).toBe(false)
   })
+  it('shows 0 % retained and 100 % passing when every weight is 0 (legacy)', () => {
+    const r = analyse(CRUSHED.map((x) => ({ ...x, retained: '0' })))
+    expect(r.complete).toBe(true)
+    expect(new Set(r.rows.map((x) => x.cumPct))).toEqual(new Set([0]))
+    expect(new Set(r.rows.map((x) => x.passing))).toEqual(new Set([100]))
+    expect(r.fm).toBe(0)
+  })
+  it('averages the grading limits as (min + max) / 2 (legacy All in grading table)', () => {
+    expect(gradingAverage([95, 100])).toBe(97.5)
+    expect(gradingAverage([0, 6])).toBe(3)
+  })
   it('requires proportions to total exactly 100', () => {
     const passing = { a: { '20': 100, '10': 50 }, b: { '20': 100, '10': 100 } }
     expect(combine({ a: 40, b: 60 }, passing, { '10': [60, 75] }).points.find((p) => p.sieve === '10')).toMatchObject({ combined: 80, within: false })
@@ -30,6 +41,11 @@ describe('sieve', () => {
 })
 
 describe('mix design', () => {
+  it('lists materials in the legacy order', () => {
+    expect(MATERIALS).toEqual(['fly_ash', 'ggbs', 'alcofine', 'microsilica', 'fiber', 'cement', '20mm', '10mm', 'river_sand',
+      'crushed_sand', 'admixture_1', 'admixture_2', 'water'])
+    expect(mix(PALAVA, '0.04').lines.map((l) => l.material)).toEqual(MATERIALS)
+  })
   it('matches Palava trial 3', () => {
     const r = mix(PALAVA, '0.04')
     const by = Object.fromEntries(r.lines.map((l) => [l.material, l]))
@@ -58,6 +74,10 @@ describe('recipe', () => {
   it('balances J000 and rejects over 100', () => {
     expect(withBalance({ J101: '20.5', j401: 5 })).toMatchObject({ parts: { J101: 20.5, J401: 5, J000: 74.5 }, total: 100 })
     expect(withBalance({ J101: 80, J401: 30 }).errors[0]).toMatch('over 100%')
+    // Legacy trace amounts (0.005 %) are kept at 3 decimals.
+    expect(withBalance({ J101: '0.005', J401: '20.5' })).toMatchObject({ parts: { J101: 0.005, J401: 20.5, J000: 79.495 }, total: 100, errors: [] })
+    expect(withBalance({ J101: '0.0055' }).errors).toEqual(['J101 can have up to 3 decimal places.'])
+    expect([fp(0.005), fp(20.5), fp(79.495)]).toEqual(['0.005', '20.50', '79.495'])
   })
 })
 

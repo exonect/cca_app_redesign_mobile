@@ -58,7 +58,7 @@ export function TrialsListScreen() {
         onEndReachedThreshold={0.4}
         ListHeaderComponent={(
           <View style={{ gap: 10, paddingBottom: 4 }}>
-            <TextField accessibilityLabel="Search trials by number, project or customer" placeholder="Search number, project or customer"
+            <TextField accessibilityLabel="Search trials by number, status, conclusion, project or customer" placeholder="Number, status, conclusion, project or customer"
               value={search} onChangeText={setSearch} returnKeyType="search" autoCorrect={false} />
             <Chips label="Status" options={STATUSES} value={status} onChange={setStatus} />
           </View>

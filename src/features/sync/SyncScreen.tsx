@@ -21,7 +21,7 @@ export function describeOp(op: Op): string {
   switch (op.kind) {
     case 'create_trial': return `New trial for ${op.projectName || 'the project'}`
     case 'patch_trial': return op.what ? `${op.what} changes` : 'Trial changes'
-    case 'put_cubes': return `${AGES[op.age]?.[0] ?? op.age} cube results`
+    case 'put_cubes': return `${op.body.remove ? 'Delete ' : ''}${AGES[op.age]?.[0] ?? op.age} cube results`
     case 'start_trial': return 'Start the trial'
     case 'upload_attachment': return `File ${op.name}`
   }

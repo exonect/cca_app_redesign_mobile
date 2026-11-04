@@ -6,7 +6,7 @@ import type { ProjectListItem } from '@/shared/types'
 import { Body, ProjectStatusChip, Small, Strong } from '@/ui/kit'
 import { color, radius } from '@/ui/theme'
 
-import { date, num, plural } from './format'
+import { crore, date, plural } from './format'
 
 export function projectPlace(p: Pick<ProjectListItem, 'customer_name' | 'city'>) {
   return [p.customer_name, p.city?.value].filter(Boolean).join(', ')
@@ -44,7 +44,7 @@ export function ProjectCard({ p }: { p: ProjectListItem }) {
     <LinkCard title={p.project_name || 'Untitled project'} subtitle={projectPlace(p)}
       chip={<ProjectStatusChip status={p.status} />}
       left={[trials, ct, created].filter(Boolean).join(', ')}
-      right={p.potential_cr !== null ? `₹${num(p.potential_cr)} Cr` : undefined}
+      right={p.potential_cr !== null ? `₹${crore(p.potential_cr)} Cr` : undefined}
       label={`${p.project_name || 'Untitled project'}, ${p.status_label}. ${projectPlace(p)}. ${trials}`}
       onPress={() => router.push(`/project/${p.id}`)} />
   )

@@ -15,9 +15,9 @@ import { RetentionChart } from './charts'
 import { num } from './format'
 import {
   freshForm, freshPayload, freshProblems, freshSoftWarnings, LIMITS, outOfRange, READING_MINUTES, readingLabel, requirementTargets, SCC_LIST, SCC_TESTS,
-  sccNumber, SLUMP_TOLERANCE, type FreshForm, type SccKey,
+  sccNumber, SLUMP_TOLERANCE, sortSlumpList, type FreshForm, type SccKey,
 } from './forms'
-import { CellInput, Section, Segmented, StepActions, Verdict, WarnText } from './parts'
+import { Section, Segmented, StepActions, Verdict, WarnText } from './parts'
 import { useStepForm, useWorkspace } from './workspace'
 
 const SHOWN = ['fresh_readings', 'fresh_density', 'site_temp', 'bleeding', 'setting', 'scc'] as const
@@ -28,6 +28,11 @@ export function sccOptions(list: Lookup[] | undefined, current: string): { value
   const unique = choices.filter((c, i) => choices.findIndex((d) => d.value === c.value) === i)
   const v = current.trim()
   return v && !unique.some((c) => Number(c.value) === Number(v)) ? [{ value: v, label: v }, ...unique] : unique
+}
+/** Slump Flow choices for one reading: the master list, a stored number not in it kept, and a way to clear it. */
+export function slumpChoices(list: Lookup[], current: string): { value: string; label: string }[] {
+  const options = sccOptions(list, current)
+  return current.trim() ? [{ value: '', label: 'Not measured' }, ...options] : options
 }
 /** The option value a stored number matches ("9.0" picks "9"). */
 const sccValue = (options: { value: string }[], current: string) =>
@@ -47,6 +52,9 @@ export function FreshStep({ readOnly, banners }: { readOnly: boolean; banners: R
   const { form, setForm, errors } = useStepForm<FreshForm>('fresh', (t) => freshForm(t, project), freshPayload, freshProblems, SHOWN)
   const bleeding = useLookups('bleeding')
   const setting = useLookups('setting')
+  // Legacy: every slump or flow reading is picked from the Slump Flow master (flow_mm), sorted by number.
+  const slumpList = useLookups('slump_flow')
+  const slumpSorted = sortSlumpList(slumpList.data ?? [])
   // Legacy: each SCC cell is a dropdown of its master list ("5 sec" ... "22 sec"); the trial stores the number.
   const sccLists: Record<SccKey, { data?: Lookup[]; isError: boolean }> = {
     v_funnel: useLookups(SCC_LIST.v_funnel), t500: useLookups(SCC_LIST.t500), l_box: useLookups(SCC_LIST.l_box), u_box: useLookups(SCC_LIST.u_box),
@@ -83,7 +91,8 @@ export function FreshStep({ readOnly, banners }: { readOnly: boolean; banners: R
             options={[{ value: 'slump', label: 'Slump' }, { value: 'flow', label: 'Flow' }]} />
         </View>
       ) : undefined}>
-        <Small style={{ paddingHorizontal: 16, paddingBottom: 8 }}>Readings in mm from the time of mixing. Leave a time blank if it was not measured.</Small>
+        <Small style={{ paddingHorizontal: 16, paddingBottom: 8 }}>Readings in mm from the Slump Flow list, from the time of mixing. Leave a time blank if it was not measured.</Small>
+        {slumpList.isError ? <Small style={{ paddingHorizontal: 16, paddingBottom: 6 }}>The Slump Flow list could not be loaded. Go back and open the trial again.</Small> : null}
         {READING_MINUTES.map((m) => {
           const hit = m === at
           const v = n(form.readings[m])
@@ -100,11 +109,13 @@ export function FreshStep({ readOnly, banners }: { readOnly: boolean; banners: R
                 <Text style={{ fontFamily: font.semibold, fontSize: 15, color: color.ink }}>{timeLabel}</Text>
                 {sub ? <Text style={{ fontFamily: hit ? font.semibold : font.regular, fontSize: 13, color: hit ? color.met.fg : color.muted }}>{sub}</Text> : null}
               </View>
-              <View style={{ width: 104, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                <CellInput style={{ flex: 1 }} keyboardType="number-pad" inputMode="numeric"
-                  accessibilityLabel={`${label} at ${m === '0' ? 'batching' : `${m} minutes`} in millimetres${hit && target ? `, target ${num(target.mm)} plus or minus ${SLUMP_TOLERANCE}` : ''}`}
-                  value={form.readings[m]} editable={!readOnly} invalid={outOfRange(form.readings[m], LIMITS.reading)}
-                  warn={!!warns[`fresh_readings.${m}`]} onChangeText={(x) => setReading(m, x)} />
+              <View style={{ width: 120, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <View style={{ flex: 1 }}>
+                  <Picker label={`${label} at ${m === '0' ? 'batching' : `${m} minutes`} in millimetres${hit && target ? `, target ${num(target.mm)} plus or minus ${SLUMP_TOLERANCE}` : ''}`}
+                    placeholder="–" value={sccValue(slumpChoices(slumpSorted, form.readings[m]), form.readings[m])}
+                    options={slumpChoices(slumpSorted, form.readings[m])} disabled={readOnly}
+                    invalid={outOfRange(form.readings[m], LIMITS.reading)} onChange={(x) => setReading(m, x ?? '')} />
+                </View>
                 <Text style={{ fontFamily: font.regular, fontSize: 13, color: color.muted }}>mm</Text>
               </View>
               <Text style={{ width: 90, textAlign: 'right', fontFamily: hit && note ? font.bold : font.regular, fontSize: 13, color: hit && note ? (within ? color.met.fg : color.below.fg) : color.muted }}>{note}</Text>

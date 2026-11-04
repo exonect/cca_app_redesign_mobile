@@ -4,7 +4,7 @@ import type { Pipeline } from '@/shared/types'
 import { H2, Small } from '@/ui/kit'
 import { color, font, radius } from '@/ui/theme'
 
-import { num } from '@/features/projects/format'
+import { crore, num } from '@/features/projects/format'
 
 /**
  * Legacy mobile dashboard "Statistics": Total Project, Total Trials, Pass %
@@ -22,7 +22,7 @@ export function StatsTiles({ data, admin }: { data: Pipeline | undefined; admin:
       { label: 'Met expectation', value: `${num(t.met_percent)}%` },
       { label: 'Below expectation', value: `${num(t.below_percent)}%` },
     ] : []),
-    { label: 'Project potential', value: `₹${num(data.potential_cr)} Cr` },
+    { label: 'Project potential', value: `₹${crore(data.potential_cr)} Cr` },
   ]
   return (
     <View style={{ gap: 8 }}>

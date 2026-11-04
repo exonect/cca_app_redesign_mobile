@@ -125,6 +125,21 @@ describe('cube strength', () => {
     })))
   })
 
+  it('deletes a saved cube set after confirming (legacy cube row delete)', async () => {
+    const alert = jest.spyOn(Alert, 'alert').mockClear()
+    const after = makeTrial({ cube_sets: [], results: { ...makeTrial().results, cubes: {} } })
+    serve(makeTrial(), (path, opts) => (path === '/trials/t-1/cubes/1d/' && opts?.method === 'DELETE' ? after : undefined))
+    await open(4)
+    await fireEvent.press(await screen.findByRole('tab', { name: /^1 day, saved/ }))
+    await fireEvent.press(screen.getByRole('button', { name: 'Delete 1 day' }))
+    expect(alert.mock.calls[0][0]).toBe('Delete the 1 day cube results?')
+    expect(mockApi).not.toHaveBeenCalledWith('/trials/t-1/cubes/1d/', expect.objectContaining({ method: 'DELETE' }))
+    const ok = (alert.mock.calls[0][2] as { text: string; onPress?: () => void }[]).find((b) => b.text === 'Delete 1 day')!
+    await act(async () => { ok.onPress!() })
+    await waitFor(() => expect(mockApi).toHaveBeenCalledWith('/trials/t-1/cubes/1d/', { method: 'DELETE' }))
+    expect(await screen.findByText('1 day cube results deleted')).toBeTruthy()
+  })
+
   it('warns in amber about a cube weight typed in grams but still saves it', async () => {
     serve(makeTrial(), (path, opts) => (opts?.method === 'PUT' ? makeTrial() : undefined))
     await open(4)
@@ -141,7 +156,8 @@ describe('in progress trial', () => {
     serve(makeTrial({ actions: started }))
     await open(3)
     expect(await screen.findByText(/This trial is in progress, so its steps are read only, as in the old app\./)).toBeTruthy()
-    expect(screen.getByLabelText(/Slump at 30 minutes/).props.editable).toBe(false)
+    expect(screen.getByLabelText(/Slump at 30 minutes/)).toBeDisabled()
+    expect(screen.getByLabelText('Site temperature, degrees Celsius').props.editable).toBe(false)
     expect(screen.queryByRole('button', { name: 'Save' })).toBeNull()
   })
 })
@@ -373,7 +389,7 @@ describe('error handling', () => {
       return undefined
     })
     await open(3)
-    await fireEvent.changeText(await screen.findByLabelText(/Slump at 30 minutes/), '150')
+    await fireEvent.changeText(await screen.findByLabelText('Site temperature, degrees Celsius'), '32')
     await fireEvent.press(screen.getByRole('button', { name: 'Save' }))
     expect(await screen.findByText('Closed trials are read only. Cube results can still be added by a Sales Admin.')).toBeTruthy()
     await waitFor(() => expect(gets).toBeGreaterThan(1))

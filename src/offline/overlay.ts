@@ -40,8 +40,12 @@ export function applyPatch(t: Trial, body: Record<string, unknown>, labelFor?: L
   return out
 }
 
-export function applyCubes(t: Trial, age: string, cubes: { weight: string | null; load: string | null }[], testedOn?: string): Trial {
+export function applyCubes(t: Trial, age: string, cubes: { weight: string | null; load: string | null }[], testedOn?: string, remove?: boolean): Trial {
   const sets = t.cube_sets.filter((c) => c.age !== age)
+  if (remove) {
+    const { [age]: _gone, ...cubesLeft } = t.results?.cubes ?? {}
+    return { ...t, cube_sets: sets, results: { ...t.results, cubes: cubesLeft } }
+  }
   const old = t.cube_sets.find((c) => c.age === age)
   sets.push({ age, age_label: old?.age_label ?? AGE_LABEL[age] ?? age, cubes, average: null, tested_on: testedOn ?? old?.tested_on ?? null })
   return { ...t, cube_sets: sets }
@@ -81,7 +85,7 @@ export function trialView(server: Trial | undefined, ops: Op[], labelFor?: Label
   if (!t) return undefined
   for (const op of ops) {
     if (op.kind === 'patch_trial') t = applyPatch(t, op.body, labelFor)
-    else if (op.kind === 'put_cubes') t = applyCubes(t, op.age, op.body.cubes, op.body.tested_on)
+    else if (op.kind === 'put_cubes') t = applyCubes(t, op.age, op.body.cubes, op.body.tested_on, op.body.remove)
     else if (op.kind === 'start_trial') t = applyStart(t)
   }
   return t

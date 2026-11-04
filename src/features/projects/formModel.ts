@@ -24,11 +24,14 @@ export const CATEGORY: Record<FkField | M2mField, string> = {
 }
 
 /** Money fields: 0 or more, up to 2 decimals, and no more whole digits than the
- * server column holds (potential 10,2 so 8 digits; prices 12,2 so 10 digits). */
-const optionalDecimal = (label: string, wholeDigits: number) => z.string().trim()
-  .refine((v) => v === '' || /^\d+(\.\d{1,2})?$/.test(v), `Enter ${label} as a number of 0 or more, up to 2 decimals.`)
-  .refine((v) => !/^\d+(\.\d{1,2})?$/.test(v) || v.split('.')[0].replace(/^0+(?=\d)/, '').length <= wholeDigits,
-    `Enter ${label} with at most ${wholeDigits} digits before the decimal point.`)
+ * server column holds (potential 12,4 so 8 digits and up to 4 decimals, as legacy; prices 12,2 so 10 digits). */
+const optionalDecimal = (label: string, wholeDigits: number, decimals = 2) => {
+  const shape = new RegExp(`^\\d+(\\.\\d{1,${decimals}})?$`)
+  return z.string().trim()
+    .refine((v) => v === '' || shape.test(v), `Enter ${label} as a number of 0 or more, up to ${decimals} decimals.`)
+    .refine((v) => !shape.test(v) || v.split('.')[0].replace(/^0+(?=\d)/, '').length <= wholeDigits,
+      `Enter ${label} with at most ${wholeDigits} digits before the decimal point.`)
+}
 
 /** Server limits (ProjectWriteSerializer). */
 export const REMARKS_MAX = 2000
@@ -44,7 +47,7 @@ export const projectSchema = z.object({
   contact_phone: z.string().trim().refine((v) => v === '' || /^\d{10}$/.test(v), 'Enter a 10 digit phone number, without +91 or spaces.'),
   sfdc_no: z.string().trim().refine((v) => v === '' || /^\d{6}$/.test(v), 'Enter all 6 digits of the SFDC number, including leading zeros.'),
   sales_person: z.string(),
-  potential_cr: optionalDecimal('the potential', 8),
+  potential_cr: optionalDecimal('the potential', 8, 4), // max_digits 12, 4 places: legacy potentials such as 0.0025 Cr
   selling_basic_price: optionalDecimal('the bulk price', 10),
   bulk_and_barrel: optionalDecimal('the barrel price', 10),
   remarks: z.string().trim().max(REMARKS_MAX, `Use ${REMARKS_MAX} characters or fewer.`),

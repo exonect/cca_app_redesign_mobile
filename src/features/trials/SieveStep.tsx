@@ -6,7 +6,7 @@ import { useState, type Dispatch, type ReactNode, type SetStateAction } from 're
 import { Text, View } from 'react-native'
 
 import { gradingLimitsQuery } from '@/api/hooks'
-import { analyse, combine, f2, passingMap, SIEVE_LABEL } from '@/shared/calc'
+import { analyse, combine, f2, GRADING_SIEVES, gradingAverage, passingMap, SIEVE_LABEL } from '@/shared/calc'
 import type { Trial } from '@/shared/types'
 import { Banner, Screen, Small } from '@/ui/kit'
 import { color, font, radius } from '@/ui/theme'
@@ -159,7 +159,35 @@ export function SieveEditor({ form, setForm, errors, readOnly, results }: {
           caption={anyProportion ? `Proportions ${SIEVE_MATERIALS.map((m) => num(form.proportions[m]) || '0').join(', ')}` : undefined} />
         {anyProportion && total === 100 && combined.points.length === 0
           ? <Small>The curve appears once every material with a proportion has all its sieves entered.</Small> : null}
+        <GradingTable points={combined.points} limits={limits.data ?? {}} />
       </Section>
     </>
+  )
+}
+
+const GRADING_COLS: (number | 'flex')[] = [64, 'flex', 'flex', 'flex', 'flex']
+
+/** Legacy "All in Grading" table: per sieve the combined passing %, and the limits as Avg ((min + max) / 2), Max and Min. */
+export function GradingTable({ points, limits }: { points: { sieve: string; combined: number }[]; limits: Record<string, [number, number]> }) {
+  const sieves = GRADING_SIEVES.filter((x) => limits[x] || points.some((p) => p.sieve === x))
+  if (sieves.length === 0) return null
+  const fig = { fontFamily: font.regular, fontSize: 15, color: color.ink, textAlign: 'right' as const, fontVariant: ['tabular-nums' as const] }
+  return (
+    <View accessibilityLabel="All in grading with limits" style={{ borderWidth: 1, borderColor: color.line, borderRadius: radius.field, overflow: 'hidden' }}>
+      <TableHead cols={['Sieve', 'All in %', 'Avg', 'Max', 'Min']} template={GRADING_COLS} />
+      {sieves.map((x) => {
+        const p = points.find((g) => g.sieve === x)
+        const lim = limits[x]
+        return (
+          <View key={x} style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 12, paddingVertical: 8, borderTopWidth: 1, borderColor: color.divider }}>
+            <Text style={[{ fontFamily: font.medium, fontSize: 15, color: color.ink }, cell(64)]}>{SIEVE_LABEL[x]}</Text>
+            <Text testID={`grading-${x}`} style={[fig, { fontFamily: font.semibold }, cell('flex')]}>{p ? f2(p.combined) : '–'}</Text>
+            <Text testID={`grading-avg-${x}`} style={[fig, cell('flex')]}>{lim ? num(gradingAverage(lim)) : '–'}</Text>
+            <Text style={[fig, { color: color.subtle }, cell('flex')]}>{lim ? num(lim[1]) : '–'}</Text>
+            <Text style={[fig, { color: color.subtle }, cell('flex')]}>{lim ? num(lim[0]) : '–'}</Text>
+          </View>
+        )
+      })}
+    </View>
   )
 }

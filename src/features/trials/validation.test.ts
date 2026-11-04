@@ -6,9 +6,9 @@ import { planUploads } from './attachments'
 import { CAST_ERRORS, castParts, isFutureDay } from './castAt'
 import {
   conclusionForm, conclusionProblems, cubePayload, cubeProblem, cubeSoftWarnings, decimalProblem, decimalTotal, freshForm, freshPayload, freshProblems,
-  freshSoftWarnings, mixForm, mixProblems, mixSoftWarnings, sccNumber, SIGNATURE_MAX_CHARS, sieveForm, sieveProblems, testedOnDefault, testedOnIso,
+  freshSoftWarnings, mixForm, mixProblems, mixSoftWarnings, sccNumber, SIGNATURE_MAX_CHARS, sieveForm, sieveProblems, sortSlumpList, testedOnDefault, testedOnIso,
 } from './forms'
-import { sccOptions } from './FreshStep'
+import { sccOptions, slumpChoices } from './FreshStep'
 import { mixWarnings } from './MixStep'
 
 jest.mock('@/api/client', () => ({ api: jest.fn(), ApiError: class extends Error {}, fieldErrors: () => ({}), session: {} }))
@@ -114,6 +114,14 @@ describe('fresh concrete', () => {
     expect(sccOptions(list, '')).toEqual([{ value: '5', label: '5 sec' }, { value: '9', label: '9 sec' }])
     expect(sccOptions(list, '7.5')[0]).toEqual({ value: '7.5', label: '7.5' })
     expect(sccOptions(list, '9.0')).toHaveLength(2)
+  })
+
+  it('offers slump and flow readings from the Slump Flow list sorted by number, keeping a stored number not in it (legacy)', () => {
+    const list = sortSlumpList([{ id: 1, value: '600' }, { id: 2, value: '180' }, { id: 3, value: '20' }] as Lookup[])
+    expect(list.map((x) => x.value)).toEqual(['20', '180', '600'])
+    expect(slumpChoices(list, '').map((o) => o.value)).toEqual(['20', '180', '600'])
+    expect(slumpChoices(list, '183').map((o) => o.value)).toEqual(['', '183', '20', '180', '600'])
+    expect(slumpChoices(list, '180')[0]).toEqual({ value: '', label: 'Not measured' })
   })
 })
 
