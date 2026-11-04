@@ -1,4 +1,4 @@
-import { useQueries, useQuery } from '@tanstack/react-query'
+import { useQuery } from '@tanstack/react-query'
 import { router } from 'expo-router'
 import { useMemo, useState } from 'react'
 import { FlatList, Pressable, Text, View } from 'react-native'
@@ -6,7 +6,7 @@ import Svg, { Circle, Polyline } from 'react-native-svg'
 
 import { api, type Page } from '@/api/client'
 import { useAuth } from '@/auth/AuthProvider'
-import type { ProjectListItem, Trial, TrialListItem } from '@/shared/types'
+import type { ProjectListItem, TrialListItem } from '@/shared/types'
 import { Button, EmptyState, ErrorState, Loading, ProjectStatusChip, Small, Strong, TrialStatusChip } from '@/ui/kit'
 import { color, font, radius } from '@/ui/theme'
 
@@ -19,7 +19,7 @@ import { projectPlace } from '@/features/projects/ProjectCard'
 import { Notice } from '@/features/projects/Sheet'
 import { DarkSegmented, TabHeader } from '@/features/projects/TabHeader'
 
-import { cubesDueToday, dueLabel, type CubeDue } from './cubesDue'
+import { dueLabel, type CubeDue } from './cubesDue'
 
 type Tab = 'trials' | 'assigned' | 'drafts' | 'complete' | 'assign'
 type Item =
@@ -45,19 +45,18 @@ export function MyWorkScreen() {
     queryFn: () => api<Page<TrialListItem>>('/trials/', { query: { status: 'in_progress', page_size: 25, ordering: '-updated_at' } }),
     enabled: !manager,
   })
-  // Cube due dates live on each trial's results.
-  const details = useQueries({
-    queries: (trials.data?.results ?? []).filter((t) => t.cast_at).map((t) => ({
-      queryKey: ['trial', t.id],
-      queryFn: () => api<Trial>(`/trials/${t.id}/`),
-      staleTime: 60_000,
-    })),
+  // One call for every cube test due today on trials this user works on.
+  const due = useQuery({
+    queryKey: ['trials', 'due-today'],
+    queryFn: () => api<{ trial: string; age: string; age_label: string }[]>('/trials/due-today/'),
+    enabled: !manager,
+    staleTime: 60_000,
   })
   const dueById = useMemo(() => {
     const m: Record<string, CubeDue[]> = {}
-    for (const d of details) if (d.data) m[d.data.id] = cubesDueToday(d.data)
+    for (const d of due.data ?? []) (m[d.trial] ??= []).push({ age: d.age, label: d.age_label, dueAt: '' })
     return m
-  }, [details])
+  }, [due.data])
 
   const tabs: { value: Tab; label: string; items: Item[] }[] = useMemo(() => {
     const trialItems: Item[] = (trials.data?.results ?? []).map((t) => ({ kind: 'trial', key: `t-${t.id}`, t, due: dueById[t.id] ?? [] }))
@@ -83,7 +82,7 @@ export function MyWorkScreen() {
   const queries = manager ? [support, closed] : ct ? [assigned, trials] : [drafts, closed, trials]
   const loading = queries.some((q) => q.isLoading)
   const failed = queries.find((q) => q.isError)
-  const { refreshing, onRefresh } = useRefresh(() => Promise.all([...queries.map((q) => q.refetch()), ...details.map((d) => d.refetch())]))
+  const { refreshing, onRefresh } = useRefresh(() => Promise.all([...queries.map((q) => q.refetch()), due.refetch()]))
 
   const dueTrials = (trials.data?.results ?? []).filter((t) => (dueById[t.id] ?? []).length > 0)
   const dueCount = dueTrials.reduce((n, t) => n + dueById[t.id].length, 0)
