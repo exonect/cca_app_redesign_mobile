@@ -43,10 +43,12 @@ export function photoName(fileName: string | null | undefined, mimeType: string 
   return `Photo_${stamp}.${e}`
 }
 
-/** Multipart body for POST /trials/:id/attachments/ (React Native file part). */
-export function attachmentForm(f: PickedFile) {
+/** Multipart body for POST /trials/:id/attachments/ (React Native file part).
+ * client_id, made on the phone, lets the server recognise a replayed upload. */
+export function attachmentForm(f: PickedFile, clientId?: string) {
   const form = new FormData()
   form.append('file', { uri: f.uri, name: f.name, type: f.type || MIME[ext(f.name)] || 'application/octet-stream' } as unknown as Blob)
+  if (clientId) form.append('client_id', clientId)
   return form
 }
 

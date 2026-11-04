@@ -11,3 +11,4 @@ android/
 *.p12
 *.mobileprovision
 expo-env.d.ts
+secrets/

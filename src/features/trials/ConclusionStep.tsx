@@ -8,19 +8,23 @@ import { useRef, useState, type ReactNode } from 'react'
 import { ActivityIndicator, Alert, Linking, Pressable, ScrollView, Text, View } from 'react-native'
 import Svg, { Circle, Path, Polyline, Rect } from 'react-native-svg'
 
-import { api, ApiError, fieldErrors, UPLOAD_TIMEOUT_MS } from '@/api/client'
+import { api, ApiError, fieldErrors } from '@/api/client'
 import { errorMessage } from '@/api/errors'
+import { useOnline } from '@/offline/connectivity'
+import { kick, outbox, useInFlight, useTrialOps } from '@/offline/outbox'
+import type { Op } from '@/offline/queue'
+import { queueFiles, readyToClose } from '@/offline/trialActions'
 import type { Outcome, Trial } from '@/shared/types'
 import { Banner, Button, Field, OutcomeChip, Screen, Small, TextField } from '@/ui/kit'
 import { color, font, radius, TOUCH } from '@/ui/theme'
 
-import { attachmentForm, extOf, MIME, photoName, planUploads, type PickedFile } from './attachments'
+import { extOf, MIME, photoName, planUploads, type PickedFile } from './attachments'
 import { downloadAndShare } from './download'
 import { date, fileSize, shortDate } from './format'
 import { conclusionForm, conclusionPayload, conclusionProblems, LIMITS, SIGNATORIES, SIGNATORY_MAX, splitWarnings, type ConclusionForm } from './forms'
 import { RadioCard, Section, StepFooter } from './parts'
 import { SignaturePad } from './SignaturePad'
-import { useReloadTrial, useStepForm, useWorkspace } from './workspace'
+import { queuedNote, savedNotice, useReloadTrial, useStepForm, useWorkspace } from './workspace'
 
 const REMARKS_MAX = LIMITS.remarks
 const SHOWN = ['remarks', ...SIGNATORIES.flatMap((s) => [s.name, s.sign])]
@@ -32,11 +36,14 @@ export function ConclusionStep({ readOnly, banners }: { readOnly: boolean; banne
   const [outcomeError, setOutcomeError] = useState<string | null>(null)
   const [drawing, setDrawing] = useState(false)
   const closing = trial.actions.close
+  const online = useOnline()
+  const synced = useTrialOps(trial.id).length === 0
 
   const check = useQuery({
     queryKey: ['trial', trial.id, 'close-check'],
     queryFn: () => api<{ warnings: string[]; checks: Trial['results']['checks'] }>(`/trials/${trial.id}/close-check/`),
-    enabled: trial.status === 'in_progress',
+    // The server's checks only make sense once it has every change made on this phone.
+    enabled: trial.status === 'in_progress' && synced,
   })
   const checks = check.data?.checks ?? trial.results?.checks ?? []
   const met = checks.filter((c) => c.status === 'met').length
@@ -64,6 +71,9 @@ export function ConclusionStep({ readOnly, banners }: { readOnly: boolean; banne
     closingNow.current = true
     try {
       if (!confirmed && !(await saveAll())) return
+      // Close is online only: it needs the server's checks and warnings, after this phone's changes have synced.
+      const blocked = await readyToClose(trial.id)
+      if (blocked) { notify({ tone: 'error', text: blocked }); return }
       const t = await close.mutateAsync(confirmed)
       accept(t)
       notify({ tone: 'ok', text: `Trial closed. ${t.code ?? ''}, ${t.outcome_label.toLowerCase()}.`.replace(' ,', ',') })
@@ -88,12 +98,14 @@ export function ConclusionStep({ readOnly, banners }: { readOnly: boolean; banne
   const footer = trial.actions.start ? (
     <StepFooter><Button variant="primary" title="Start trial" onPress={startTrial} busy={starting} style={{ flex: 1 }} /></StepFooter>
   ) : closing ? (
-    <StepFooter note="Locks the trial and moves the project to Trials closed if this is the last open trial.">
-      <Button title="Save" onPress={async () => { if (await saveAll()) notify({ tone: 'ok', text: 'Conclusion saved' }) }} disabled={!dirty} busy={saving && !close.isPending} style={{ flex: 1 }} />
+    <StepFooter note={online
+      ? 'Locks the trial and moves the project to Trials closed if this is the last open trial.'
+      : 'Closing needs a connection. Everything else on this trial can be saved offline.'}>
+      <Button title="Save" onPress={async () => { if (await saveAll()) notify(savedNotice(trial.id, 'Conclusion saved')) }} disabled={!dirty} busy={saving && !close.isPending} style={{ flex: 1 }} />
       <Button variant="primary" title="Close trial" onPress={() => { void closeTrial(false) }} busy={close.isPending} disabled={saving} style={{ flex: 1.4 }} />
     </StepFooter>
   ) : !readOnly ? (
-    <StepFooter><Button title="Save" onPress={async () => { if (await saveAll()) notify({ tone: 'ok', text: 'Conclusion saved' }) }} disabled={!dirty} busy={saving} style={{ flex: 1 }} /></StepFooter>
+    <StepFooter><Button title="Save" onPress={async () => { if (await saveAll()) notify(savedNotice(trial.id, 'Conclusion saved')) }} disabled={!dirty} busy={saving} style={{ flex: 1 }} /></StepFooter>
   ) : <StepFooter><View /></StepFooter>
 
   return (
@@ -192,31 +204,42 @@ function Attachments() {
   const { trial, notify } = useWorkspace()
   const qc = useQueryClient()
   const reload = useReloadTrial(trial.id)
+  const online = useOnline()
+  const sending = useInFlight()
+  const ops = useTrialOps(trial.id)
+  const waiting = ops.filter((o): o is Extract<Op, { kind: 'upload_attachment' }> => o.kind === 'upload_attachment')
   const [problems, setProblems] = useState<string[]>([])
-  const [uploading, setUploading] = useState(0)
+  const [keeping, setKeeping] = useState(false)
   const [opening, setOpening] = useState<number | null>(null)
   const canAttach = trial.actions.attach
   const canDelete = trial.actions.edit
   const refresh = () => qc.invalidateQueries({ queryKey: ['trial', trial.id] })
 
+  // Every photo and file is first copied into the app's own storage, then
+  // uploaded in order with a client_id: now when online, later when not.
   async function upload(files: PickedFile[]) {
     if (!files.length) return
-    const { upload: good, problems: skipped } = planUploads(files, trial.attachments.length)
-    setProblems(skipped)
-    setUploading(good.length)
-    let ok = 0
-    for (const f of good) {
-      try {
-        await api(`/trials/${trial.id}/attachments/`, { form: attachmentForm(f), timeoutMs: UPLOAD_TIMEOUT_MS })
-        ok += 1
-      } catch (e) {
-        const msg = fieldErrors(e).file ?? errorMessage(e, 'Upload failed. Try again.')
-        setProblems((p) => [...p, `${f.name}: ${msg}`])
-        reload(e)
+    const { upload: good, problems: skipped } = planUploads(files, trial.attachments.length + waiting.length)
+    setKeeping(true)
+    try {
+      const failed = await queueFiles(trial.id, good)
+      setProblems([...skipped, ...failed])
+      const kept = good.length - failed.length
+      if (kept) {
+        const what = kept === 1 ? 'File saved' : `${kept} files saved`
+        notify({ tone: 'info', text: online ? `${what}. Uploading now.` : queuedNote(what) })
       }
-      setUploading((x) => x - 1)
+    } finally {
+      setKeeping(false)
     }
-    if (ok) { await refresh(); notify({ tone: 'ok', text: ok === 1 ? 'File added' : 'Files added' }) }
+  }
+
+  async function retryUpload(op: Op) { await outbox.retry(op.id); kick() }
+  function discardUpload(op: Extract<Op, { kind: 'upload_attachment' }>) {
+    Alert.alert('Discard this file?', `${op.name} will not be uploaded and is removed from this phone.`, [
+      { text: 'Keep it', style: 'cancel' },
+      { text: 'Discard', style: 'destructive', onPress: () => { void outbox.discard(op.id) } },
+    ])
   }
 
   async function takePhoto() {
@@ -274,10 +297,32 @@ function Attachments() {
   return (
     <Section title="Attachments">
       <View accessibilityLiveRegion="polite" style={{ gap: 6 }}>
-        {uploading > 0 ? <Small>Uploading {uploading} {uploading === 1 ? 'file' : 'files'}…</Small> : null}
+        {keeping ? <Small>Saving files on this phone…</Small> : null}
         {problems.length > 0 ? <Banner tone="error">{problems.join('\n')}</Banner> : null}
       </View>
-      {trial.attachments.length === 0
+      {waiting.map((op) => (
+        <View key={op.id} style={{ gap: 6 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+            <View style={{ width: 44, height: 44, borderRadius: radius.field, alignItems: 'center', justifyContent: 'center', backgroundColor: color.below.bg }}>
+              <Text style={{ fontFamily: font.bold, fontSize: 12, color: color.below.fg }}>{extOf(op.name).toUpperCase().slice(0, 4)}</Text>
+            </View>
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Text numberOfLines={1} style={{ fontFamily: font.semibold, fontSize: 15, color: color.ink }}>{op.name}</Text>
+              <Small>{op.state === 'failed' ? 'Not uploaded' : sending === op.id ? 'Uploading…' : online ? 'Not synced yet, waiting to upload' : 'Not synced yet, uploads when back online'}</Small>
+            </View>
+          </View>
+          {op.state === 'failed' ? (
+            <>
+              <Banner tone="error">{op.error?.fields.file ?? op.error?.message ?? 'The server refused this file.'}</Banner>
+              <View style={{ flexDirection: 'row', gap: 10 }}>
+                <Button title="Discard" variant="danger" onPress={() => discardUpload(op)} />
+                <Button title="Retry" disabled={!online} onPress={() => { void retryUpload(op) }} />
+              </View>
+            </>
+          ) : null}
+        </View>
+      ))}
+      {trial.attachments.length === 0 && waiting.length === 0
         ? <Small>No files yet. Add cube test reports, photos or videos from the site.</Small>
         : trial.attachments.map((a) => {
           const e = extOf(a.original_name).toUpperCase()
@@ -305,11 +350,11 @@ function Attachments() {
         })}
       {canAttach && (
         <View style={{ flexDirection: 'row', gap: 10 }}>
-          <IconButton label="Take photo" icon="camera" onPress={takePhoto} disabled={uploading > 0} />
-          <IconButton label="Choose file" icon="file" onPress={chooseFile} disabled={uploading > 0} />
+          <IconButton label="Take photo" icon="camera" onPress={takePhoto} disabled={keeping} />
+          <IconButton label="Choose file" icon="file" onPress={chooseFile} disabled={keeping} />
         </View>
       )}
-      {canAttach ? <Small>PDF, JPG, PNG, XLSX or MP4, up to 25 MB each and 30 files per trial.</Small> : null}
+      {canAttach ? <Small>PDF, JPG, PNG, XLSX or MP4, up to 25 MB each and 30 files per trial. Photos taken offline upload when you are back online.</Small> : null}
     </Section>
   )
 }

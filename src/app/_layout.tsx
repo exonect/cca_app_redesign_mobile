@@ -11,6 +11,9 @@ import { SafeAreaProvider } from 'react-native-safe-area-context'
 
 import { ApiError } from '@/api/client'
 import { AuthProvider, useAuth } from '@/auth/AuthProvider'
+import { isOnline } from '@/offline/connectivity'
+import { useOfflineRuntime } from '@/offline/runtime'
+import { OfflineBar } from '@/offline/ui'
 import { SignInScreen } from '@/features/auth/SignInScreen'
 import { ScreenErrorBoundary } from '@/ui/ErrorFallback'
 import { Banner, Body, Button, H1, Loading } from '@/ui/kit'
@@ -28,17 +31,26 @@ focusManager.setEventListener((handleFocus) => {
   return () => sub.remove()
 })
 
+// Queries pause while offline (showing what is cached, which is kept for 3
+// days so it can be saved for offline use); mutations always run, so an
+// online only action fails at once with "No connection" instead of hanging.
 const queryClient = new QueryClient({
   defaultOptions: {
-    queries: { staleTime: 30_000, retry: (n, e) => !(e instanceof ApiError && e.status >= 400 && e.status < 500) && n < 2 },
+    queries: {
+      staleTime: 30_000,
+      gcTime: 3 * 24 * 3_600_000,
+      retry: (n, e) => !(e instanceof ApiError && e.status >= 400 && e.status < 500) && !(e instanceof ApiError && e.status === 0 && !isOnline()) && n < 2,
+    },
+    mutations: { networkMode: 'always' },
   },
 })
 
 function Gate() {
-  const { status, error, resume, signOut } = useAuth()
+  const { status, error, resume, signOut, user } = useAuth()
   // A signed out device never shows the previous user's data.
   useEffect(() => { if (status === 'signed_out') queryClient.clear() }, [status])
-  if (status === 'loading') return <Loading label="Signing you in" />
+  const ready = useOfflineRuntime(queryClient, status === 'signed_in' ? user : null)
+  if (status === 'loading' || (status === 'signed_in' && !ready)) return <Loading label="Signing you in" />
   if (status === 'unavailable') {
     return (
       <View style={{ flex: 1, backgroundColor: color.concrete, padding: 24, paddingTop: 72, gap: 12 }}>
@@ -52,9 +64,12 @@ function Gate() {
   }
   if (status === 'signed_out') return <SignInScreen />
   return (
-    <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: color.concrete } }}>
-      <Stack.Screen name="(tabs)" />
-    </Stack>
+    <View style={{ flex: 1, backgroundColor: color.concrete }}>
+      <OfflineBar />
+      <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: color.concrete } }}>
+        <Stack.Screen name="(tabs)" />
+      </Stack>
+    </View>
   )
 }
 

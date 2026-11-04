@@ -8,6 +8,7 @@ import { errorMessage, otherErrors } from '@/api/errors'
 import { useLookups } from '@/api/hooks'
 import { useAuth } from '@/auth/AuthProvider'
 import type { Role, User } from '@/shared/types'
+import type { UserWithManagerSource } from '@/shared/typesExt'
 import { Banner, Body, Button, EmptyState, ErrorState, Field, Loading, Picker, Small, Strong, TextField } from '@/ui/kit'
 import { color, font, radius } from '@/ui/theme'
 
@@ -155,8 +156,20 @@ type Form = z.infer<typeof schema>
 type Key = keyof Form
 const FIELDS = Object.keys(schema.shape) as Key[]
 
+/** Where the manager comes from, read only (the web admin can switch back to Entra ID). */
+export function managerSourceNote(u: UserWithManagerSource): string | null {
+  const entraOnly = u.entra_manager_email ? ` Entra ID lists ${u.entra_manager_email}, who is not a CCA user.` : ''
+  switch (u.manager_source) {
+    case 'app': return 'Set in CCA by an Admin. Entra ID does not change it.'
+    case 'entra': return 'From Entra ID, updated when they sign in and every night. Choosing a manager here sets it in CCA instead.'
+    case 'none': return `No manager in CCA or Entra ID.${entraOnly}`
+    default: return null
+  }
+}
+
 function UserSheet({ user, onClose, onDone }: { user: User | 'new' | null; onClose: () => void; onDone: (msg: string) => void }) {
-  const existing = user && user !== 'new' ? user : null
+  const existing = user && user !== 'new' ? user as UserWithManagerSource : null
+  const initialManager = existing?.manager ? String(existing.manager) : ''
   const { user: me } = useAuth()
   // The server refuses an Admin changing their own role or deactivating themselves.
   const isSelf = !!existing && existing.id === me?.id
@@ -177,8 +190,10 @@ function UserSheet({ user, onClose, onDone }: { user: User | 'new' | null; onClo
 
   const save = useMutation({
     mutationFn: (f: Form) => {
-      const { role, ...rest } = f
-      const body = { ...rest, ...(isSelf ? {} : { role }), region: f.region ? Number(f.region) : null, manager: f.manager ? Number(f.manager) : null }
+      const { role, manager, ...rest } = f
+      // Sending manager makes it an app setting (overriding Entra ID), so it is only sent when it changed.
+      const managerPart = !existing || manager !== initialManager ? { manager: manager ? Number(manager) : null } : {}
+      const body = { ...rest, ...(isSelf ? {} : { role }), region: f.region ? Number(f.region) : null, ...managerPart }
       return existing ? api<User>(`/users/${existing.id}/`, { method: 'PATCH', body }) : api<User>('/users/', { method: 'POST', body })
     },
     onSuccess: (u) => { void qc.invalidateQueries({ queryKey: ['users'] }); onDone(existing ? `${u.full_name} saved` : `${u.full_name} added`); onClose() },
@@ -257,6 +272,9 @@ function UserSheet({ user, onClose, onDone }: { user: User | 'new' | null; onClo
         <Picker label="Manager" value={v.manager || null} placeholder={managers.isLoading ? 'Loading…' : 'No manager'}
           options={[{ value: '', label: 'No manager' }, ...managerOptions]} onChange={(x) => set('manager', x ?? '')} />
       </Field>
+      {existing && managerSourceNote(existing) ? (
+        <Small>{`Manager source: ${managerSourceNote(existing)}`}</Small>
+      ) : null}
       <Body style={{ color: color.muted, fontSize: 13 }}>Only an Admin can change a role later.</Body>
     </Sheet>
   )

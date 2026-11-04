@@ -4,7 +4,7 @@
  * that switches steps; each step renders its own body and sticky actions.
  * Unsaved work is guarded on step switches and on leaving the screen.
  */
-import { useMutation, useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { router, useLocalSearchParams, usePreventRemove } from 'expo-router'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Alert, Pressable, Text, View } from 'react-native'
@@ -13,7 +13,13 @@ import Svg, { Path, Polyline } from 'react-native-svg'
 
 import { api, ApiError, fieldErrors } from '@/api/client'
 import { errorMessage } from '@/api/errors'
+import { labelsFrom, useTrialOps } from '@/offline/outbox'
+import { trialView } from '@/offline/overlay'
+import { startTrial as startOrQueue } from '@/offline/trialActions'
+import { NotOnPhone, TrialSyncNote } from '@/offline/ui'
+import { FlagBanner } from '@/features/flags/FlagBanner'
 import type { Project, Trial } from '@/shared/types'
+import type { TrialWithFlags } from '@/shared/typesExt'
 import { Banner, Button, ErrorState, Header, Loading, Screen, TrialStatusChip } from '@/ui/kit'
 import { color, font, TOUCH } from '@/ui/theme'
 
@@ -24,7 +30,7 @@ import { parseStep, STEPS, stepDone, type StepNo } from './forms'
 import { FreshStep } from './FreshStep'
 import { MixStep } from './MixStep'
 import { SieveStep } from './SieveStep'
-import { useAccept, useReloadTrial, useSaverRegistry, WorkspaceContext, type Notice, type WorkspaceValue } from './workspace'
+import { queuedNote, useAccept, useReloadTrial, useSaverRegistry, WorkspaceContext, type Notice, type WorkspaceValue } from './workspace'
 
 const SHORT = ['Sieve', 'Mix', 'Fresh', 'Cubes', 'Close']
 
@@ -37,31 +43,44 @@ function leaveTo(projectId?: string) {
 export function TrialScreen() {
   const params = useLocalSearchParams<{ id: string; step?: string }>()
   const id = String(params.id ?? '')
-  const q = useQuery({ queryKey: ['trial', id], queryFn: () => api<Trial>(`/trials/${id}/`), enabled: !!id })
-  const projectId = q.data?.project
+  const qc = useQueryClient()
+  // Changes on this phone that have not synced; a trial made offline exists only here until it syncs.
+  const ops = useTrialOps(id)
+  const madeHere = ops.some((o) => o.kind === 'create_trial')
+  const q = useQuery({ queryKey: ['trial', id], queryFn: () => api<Trial>(`/trials/${id}/`), enabled: !!id && !madeHere })
+  const view = useMemo(() => trialView(q.data, ops, labelsFrom(qc)), [q.data, ops, qc])
+  const projectId = view?.project
   const project = useQuery({
     queryKey: ['project', projectId],
     queryFn: () => api<Project>(`/projects/${projectId}/`),
     enabled: !!projectId,
   })
+  const paused = (x: { isPending: boolean; fetchStatus: string }) => x.isPending && x.fetchStatus === 'paused'
 
-  if (q.isPending || (projectId && project.isPending)) {
+  if (!view && paused(q)) {
+    return <Screen header={<Header title="Trial" back={{ label: 'back', onPress: () => leaveTo() }} />}><NotOnPhone what="trial" /></Screen>
+  }
+  if (!view || (projectId && project.isPending && !paused(project))) {
+    if (q.isError) return <TrialError error={q.error} onRetry={() => q.refetch()} />
     return <Screen header={<Header title="Trial" back={{ label: 'back', onPress: () => leaveTo() }} />}><Loading label="Loading trial" /></Screen>
   }
-  if (q.isError) {
-    const missing = q.error instanceof ApiError && q.error.status === 404
-    return (
-      <Screen header={<Header title="Trial" back={{ label: 'back', onPress: () => leaveTo() }} />}>
-        {missing
-          ? <Banner tone="error">This trial was not found. It may have been deleted, or it belongs to a project you cannot see.</Banner>
-          : <ErrorState error={q.error} onRetry={() => q.refetch()} />}
-      </Screen>
-    )
-  }
-  return <Workspace trial={q.data} project={project.data} projectError={project.isError} step={parseStep(params.step)} />
+  if (q.isError && !madeHere) return <TrialError error={q.error} onRetry={() => q.refetch()} />
+  return <Workspace trial={view} project={project.data} projectError={project.isError} step={parseStep(params.step)} />
+}
+
+function TrialError({ error, onRetry }: { error: unknown; onRetry: () => void }) {
+  const missing = error instanceof ApiError && error.status === 404
+  return (
+    <Screen header={<Header title="Trial" back={{ label: 'back', onPress: () => leaveTo() }} />}>
+      {missing
+        ? <Banner tone="error">This trial was not found. It may have been deleted, or it belongs to a project you cannot see.</Banner>
+        : <ErrorState error={error} onRetry={onRetry} />}
+    </Screen>
+  )
 }
 
 function Workspace({ trial, project, projectError, step }: { trial: Trial; project: Project | undefined; projectError: boolean; step: StepNo }) {
+  const qc = useQueryClient()
   const registry = useSaverRegistry()
   const acceptTrial = useAccept(trial.id)
   const reload = useReloadTrial(trial.id)
@@ -106,18 +125,25 @@ function Workspace({ trial, project, projectError, step }: { trial: Trial; proje
     if (step < 5) switchTo((step + 1) as StepNo)
   }, [registry, saveAll, step, switchTo])
 
-  const start = useMutation({ mutationFn: () => api<Trial>(`/trials/${trial.id}/start/`, { method: 'POST' }) })
+  const [starting, setStarting] = useState(false)
   const startingNow = useRef(false)
+  const trialRef = useRef(trial)
+  trialRef.current = trial
   const startTrial = useCallback(async () => {
     // One start at a time: saving first takes a moment, and a second tap must not start twice.
     if (startingNow.current) return
     startingNow.current = true
+    setStarting(true)
     setCastError(null)
     try {
       if (registry.isDirty() && !(await saveAll())) return
-      const t = await start.mutateAsync()
-      accept(t)
-      notify({ tone: 'ok', text: `Trial started. Its number is ${t.code}.` })
+      // Offline the start is kept on the phone; the trial gets its number when it syncs.
+      const { trial: t, queued } = await startOrQueue(qc, trialRef.current)
+      if (queued) notify({ tone: 'info', text: queuedNote('Trial started') + ' It gets its number then.' })
+      else {
+        accept(t)
+        notify({ tone: 'ok', text: `Trial started. Its number is ${t.code}.` })
+      }
     } catch (e) {
       const f = fieldErrors(e)
       if (f.cast_at) {
@@ -130,8 +156,9 @@ function Workspace({ trial, project, projectError, step }: { trial: Trial; proje
       }
     } finally {
       startingNow.current = false
+      setStarting(false)
     }
-  }, [registry, saveAll, start, accept, notify, step, switchTo, reload])
+  }, [registry, saveAll, qc, accept, notify, step, switchTo, reload])
 
   // Leaving the screen (back button, gesture, tab) with unsaved work asks first.
   usePreventRemove(registry.dirty, ({ repeat }) => {
@@ -156,13 +183,15 @@ function Workspace({ trial, project, projectError, step }: { trial: Trial; proje
 
   const value: WorkspaceValue = useMemo(() => ({
     trial, project, step, header, accept, report: registry.report, remove: registry.remove, dirty: registry.dirty,
-    isDirty: registry.isDirty, saving, saveAll, goTo, next, startTrial, starting: start.isPending, castError, setCastError,
+    isDirty: registry.isDirty, saving, saveAll, goTo, next, startTrial, starting, castError, setCastError,
     notice, notify,
-  }), [trial, project, step, header, accept, registry, saving, saveAll, goTo, next, startTrial, start.isPending, castError, notice, notify])
+  }), [trial, project, step, header, accept, registry, saving, saveAll, goTo, next, startTrial, starting, castError, notice, notify])
 
   const readOnly = !trial.actions.edit
   const banners = (
     <>
+      <TrialSyncNote trialId={trial.id} />
+      <FlagBanner flags={(trial as TrialWithFlags).flags} refresh={[['trial', trial.id], ['trials']]} what="trial" />
       {trial.status === 'closed' && (
         <Banner tone="info">This trial is closed and read only.{trial.actions.edit_cubes ? ' You can still add cube results in Cube strength.' : ''}</Banner>
       )}
@@ -175,7 +204,8 @@ function Workspace({ trial, project, projectError, step }: { trial: Trial; proje
 
   return (
     <WorkspaceContext.Provider value={value}>
-      <View key={`${step}-${trial.status}`} style={{ flex: 1 }}>
+      {/* A corrected flag changes the saved value: the step's form starts again from it. */}
+      <View key={`${step}-${trial.status}-${(trial as TrialWithFlags).flags?.length ?? 0}`} style={{ flex: 1 }}>
         {step === 1 && <SieveStep readOnly={readOnly} banners={banners} />}
         {step === 2 && <MixStep readOnly={readOnly} banners={banners} />}
         {step === 3 && <FreshStep readOnly={readOnly} banners={banners} />}
@@ -201,7 +231,7 @@ function TrialHeader({ trial, project, step, done, onStep, onPdf, pdfBusy }: {
         </Pressable>
         <View style={{ flex: 1, minWidth: 0 }}>
           <Text accessibilityRole="header" numberOfLines={1} style={{ fontFamily: font.condBold, fontSize: 19, lineHeight: 22, color: color.ink }}>
-            {trial.code ?? 'Draft trial'}
+            {trial.code ?? (trial.status === 'draft' ? 'Draft trial' : 'Trial, numbered on sync')}
           </Text>
           <Text numberOfLines={1} style={{ fontFamily: font.regular, fontSize: 13, color: color.muted }}>
             Step {step} of 5, {STEPS[step - 1].label.toLowerCase()}

@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { Platform, Pressable, ScrollView, Text, View } from 'react-native'
 
 import { useAuth } from '@/auth/AuthProvider'
+import { useSyncCounts } from '@/offline/outbox'
 import { Body, Button, H2, Small, Strong } from '@/ui/kit'
 import { color, font, radius } from '@/ui/theme'
 
@@ -23,6 +24,7 @@ export function MoreScreen() {
   const [confirm, setConfirm] = useState(false)
   const [busy, setBusy] = useState(false)
   const admin = hasRole('AD')
+  const sync = useSyncCounts()
 
   const work: { title: string; meta?: string; href: Href }[] = [
     { title: 'Projects', meta: hasRole('CT') ? 'Assigned to you' : undefined, href: '/projects' },
@@ -50,6 +52,12 @@ export function MoreScreen() {
       <ScrollView contentContainerStyle={{ padding: 16, gap: 18, paddingBottom: 32 }}>
         <List label="Work" rows={work.map((w) => ({ ...w, onPress: () => router.push(w.href) }))} />
 
+        <List label="Sync" rows={[{
+          title: 'Changes to sync',
+          meta: sync.problems ? `${sync.problems} could not sync` : sync.waiting ? `${sync.waiting} waiting` : 'All synced',
+          onPress: () => router.push('/sync'),
+        }]} />
+
         <View style={{ gap: 8 }}>
           <H2>Admin</H2>
           {admin ? (
@@ -71,7 +79,9 @@ export function MoreScreen() {
       </ScrollView>
 
       <ConfirmSheet open={confirm} onClose={() => setConfirm(false)} title="Sign out of CCA?"
-        body="You will need your Thermax Microsoft account to sign in again. Nothing you saved is lost."
+        body={sync.waiting
+          ? `${sync.waiting === 1 ? '1 change' : `${sync.waiting} changes`} on this phone have not synced yet. They stay on this phone and sync when you sign in again. You will need your Thermax Microsoft account to sign in.`
+          : 'You will need your Thermax Microsoft account to sign in again. Nothing you saved is lost.'}
         confirmLabel="Sign out" busy={busy}
         onConfirm={async () => { setBusy(true); try { await signOut() } finally { setBusy(false) } }} />
     </View>

@@ -61,3 +61,36 @@ it('still offers the role choice on other users', async () => {
   expect(screen.queryByText('You cannot change your own role. Ask another Admin.')).toBeNull()
   qc.clear()
 })
+
+describe('manager source (set in CCA or from Entra ID)', () => {
+  const fromEntra = { ...other, manager: 1, manager_name: 'Neha Admin', manager_source: 'entra', entra_manager_email: null } as User
+
+  it('shows where the manager comes from, read only, and keeps an Entra manager when saving other fields', async () => {
+    mockApi.mockImplementation(async (path: string, opts?: { method?: string }) => {
+      if (path === '/users/' && !opts?.method) return { count: 2, next: null, previous: null, results: [me, fromEntra] }
+      if (path === '/lookups/') return []
+      if (path === '/users/2/' && opts?.method === 'PATCH') return fromEntra
+      throw new Error(`unexpected ${path}`)
+    })
+    const qc = newClient()
+    await render(<QueryClientProvider client={qc}><UsersScreen /></QueryClientProvider>)
+    await fireEvent.press(await screen.findByRole('button', { name: 'Edit Ravi CT' }))
+    expect(await screen.findByText(/^Manager source: From Entra ID/)).toBeTruthy()
+    await fireEvent.changeText(screen.getByLabelText('Last name'), 'Kumar')
+    await fireEvent.press(screen.getByRole('button', { name: 'Save user' }))
+    await waitFor(() => expect(mockApi).toHaveBeenCalledWith('/users/2/', expect.objectContaining({ method: 'PATCH' })))
+    const body = mockApi.mock.calls.find(([p, o]) => p === '/users/2/' && o?.method === 'PATCH')![1].body
+    // Sending manager would turn it into an app setting that overrides Entra ID.
+    expect(body).not.toHaveProperty('manager')
+    expect(body).toMatchObject({ last_name: 'Kumar' })
+    qc.clear()
+  })
+
+  it('words each source', () => {
+    const { managerSourceNote } = jest.requireActual('./UsersScreen')
+    expect(managerSourceNote({ manager_source: 'app' })).toBe('Set in CCA by an Admin. Entra ID does not change it.')
+    expect(managerSourceNote({ manager_source: 'none', entra_manager_email: 'boss@thermaxglobal.com' }))
+      .toBe('No manager in CCA or Entra ID. Entra ID lists boss@thermaxglobal.com, who is not a CCA user.')
+    expect(managerSourceNote({})).toBeNull()
+  })
+})

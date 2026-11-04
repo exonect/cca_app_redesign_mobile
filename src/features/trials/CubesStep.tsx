@@ -3,11 +3,12 @@
  * age (PUT /trials/:id/cubes/:age/), Add test age, and results so far.
  * Standard ages are 1, 3, 7 and 28 days; 12, 16, 18, 20 h and 5 days are
  * added on demand. Test dates count from the cast date. */
-import { useMutation } from '@tanstack/react-query'
+import { useQueryClient } from '@tanstack/react-query'
 import { useState, type ReactNode } from 'react'
 import { Pressable, ScrollView, Text, View } from 'react-native'
 
-import { api, fieldErrors } from '@/api/client'
+import { fieldErrors } from '@/api/client'
+import { saveCubes } from '@/offline/trialActions'
 import { AGES, cubeAverage, f2, n, STANDARD_AGES, strength, testDue } from '@/shared/calc'
 import type { Trial } from '@/shared/types'
 import { Banner, Button, Screen, Small } from '@/ui/kit'
@@ -16,7 +17,7 @@ import { color, font, radius } from '@/ui/theme'
 import { istDay, shortDate } from './format'
 import { badCubeLoad, badCubeWeight, cubePayload, cubeProblem, cubeRows, pct, requirementTargets, sortAges, type CubeEntry } from './forms'
 import { CellInput, cell, StepFooter, TableHead } from './parts'
-import { saveError, useReloadTrial, useSaver, useWorkspace } from './workspace'
+import { queuedNote, saveError, useReloadTrial, useSaver, useWorkspace } from './workspace'
 
 const OPTIONAL_AGES = Object.keys(AGES).filter((a) => !STANDARD_AGES.includes(a))
 const COLS: (number | 'flex')[] = [44, 'flex', 'flex', 'flex']
@@ -61,10 +62,8 @@ export function CubesStep({ canEdit, banners }: { canEdit: boolean; banners: Rea
   const formFor = (a: string): AgeForm => forms[a] ?? { rows: cubeRows(trial, a), baseline: cubeRows(trial, a) }
   const dirtyAges = ages.filter((a) => isDirty(forms[a]))
 
-  const m = useMutation({
-    mutationFn: ({ age, body }: { age: string; body: ReturnType<typeof cubePayload> }) =>
-      api<Trial>(`/trials/${trial.id}/cubes/${age}/`, { method: 'PUT', body }),
-  })
+  const qc = useQueryClient()
+  const [savingAge, setSavingAge] = useState<string | null>(null)
 
   async function saveAge(age: string) {
     const f = forms[age]
@@ -77,12 +76,14 @@ export function CubesStep({ canEdit, banners }: { canEdit: boolean; banners: Rea
       setSelected(age)
       return false
     }
+    setSavingAge(age)
     try {
-      const t = await m.mutateAsync({ age, body: cubePayload(f.rows) })
-      accept(t)
+      // Online: PUT now. Offline: kept on the phone and synced later.
+      const { trial: t, queued } = await saveCubes(qc, trial.id, age, cubePayload(f.rows))
+      if (!queued) accept(t)
       const fresh = cubeRows(t, age)
       setForms((x) => ({ ...x, [age]: { rows: fresh, baseline: fresh } }))
-      notify({ tone: 'ok', text: `${AGES[age][0]} cube results saved` })
+      notify(queued ? { tone: 'info', text: queuedNote(`${AGES[age][0]} cube results saved`) } : { tone: 'ok', text: `${AGES[age][0]} cube results saved` })
       return true
     } catch (e) {
       const fe = fieldErrors(e)
@@ -92,6 +93,8 @@ export function CubesStep({ canEdit, banners }: { canEdit: boolean; banners: Rea
       notify({ tone: 'error', text: `${AGES[age][0]}: ${msg}` })
       setSelected(age)
       return false
+    } finally {
+      setSavingAge(null)
     }
   }
 
@@ -119,7 +122,7 @@ export function CubesStep({ canEdit, banners }: { canEdit: boolean; banners: Rea
               <>
                 <Button title="Next" accessibilityLabel="Next: conclusion" onPress={next} busy={savingAll} style={{ flex: 0.7 }} />
                 <Button variant="primary" title={`Save ${label.replace(/s$/, '')} results`} disabled={!selDirty}
-                  busy={m.isPending && m.variables?.age === selected} onPress={() => saveAge(selected)} style={{ flex: 1.3 }} />
+                  busy={savingAge === selected} onPress={() => saveAge(selected)} style={{ flex: 1.3 }} />
               </>
             )
             : <Button variant="primary" title="Next: conclusion" onPress={next} style={{ flex: 1 }} />}

@@ -177,7 +177,7 @@ const PROJECT_LABEL: Record<ProjectStatus, string> = {
   draft: 'Draft', created: 'Created', support_requested: 'Support requested', assigned_to_ct: 'Assigned to CT',
   trial_in_progress: 'Trial in progress', trials_closed: 'Trials closed', completed: 'Completed',
 }
-function Pill({ text, bg, fg, border }: { text: string; bg: string; fg: string; border?: string }) {
+export function Pill({ text, bg, fg, border }: { text: string; bg: string; fg: string; border?: string }) {
   return <View style={[s.pill, { backgroundColor: bg }, border ? { borderWidth: 1, borderColor: border } : null]}><Text style={[s.pillText, { color: fg }]}>{text}</Text></View>
 }
 export const ProjectStatusChip = ({ status }: { status: ProjectStatus }) => {

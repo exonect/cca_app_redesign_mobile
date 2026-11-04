@@ -5,7 +5,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useState, type ReactNode } from 'react'
 import { Text, View } from 'react-native'
 
-import { api } from '@/api/client'
+import { gradingLimitsQuery } from '@/api/hooks'
 import { analyse, combine, f2, passingMap, SIEVE_LABEL } from '@/shared/calc'
 import type { Trial } from '@/shared/types'
 import { Banner, Screen, Small } from '@/ui/kit'
@@ -29,13 +29,9 @@ export function serverAnalysis(r: Trial['results']['sieves'][string] | undefined
   }
 }
 
-type Limit = { id: number; standard: string; nominal_size_mm: string; sieve: string; lower: string; upper: string }
-
 export function useGradingLimits() {
   return useQuery({
-    queryKey: ['grading-limits', 'IS 383', '20'],
-    queryFn: () => api<Limit[]>('/grading-limits/', { query: { standard: 'IS 383', nominal_size_mm: '20' } }),
-    staleTime: 30 * 60_000,
+    ...gradingLimitsQuery(),
     select: (rows) => Object.fromEntries(rows.map((r) => [r.sieve, [Number(r.lower), Number(r.upper)] as [number, number]])),
   })
 }

@@ -11,6 +11,9 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 
 import { api, session } from '@/api/client'
 import { errorMessage, isApiError, UserError } from '@/api/errors'
+import { cachedUser, clearCache } from '@/offline/cache'
+import { isOnline, subscribe as onConnectivity } from '@/offline/connectivity'
+import { offlineStorage } from '@/offline/storage'
 import type { Role, User } from '@/shared/types'
 
 WebBrowser.maybeCompleteAuthSession()
@@ -26,6 +29,8 @@ const SCHEME = (Constants.expoConfig?.scheme as string | undefined) ?? 'com.ther
 type Status = 'loading' | 'unavailable' | 'signed_out' | 'signed_in'
 type Ctx = {
   status: Status; user: User | null; error: string | null; busy: boolean; microsoftConfigured: boolean
+  /** Signed in from the data saved on this phone because the server could not be reached; checked again once online. */
+  offline: boolean
   signInWithMicrosoft: () => Promise<void>; devSignIn: (email: string) => Promise<void>; signOut: () => Promise<void>
   hasRole: (...roles: Role[]) => boolean
   /** Try resuming the saved session again (from the unavailable state). */
@@ -47,6 +52,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [offline, setOffline] = useState(false)
 
   const discovery = useAutoDiscovery(TENANT_ID ? `https://login.microsoftonline.com/${TENANT_ID}/v2.0` : 'https://invalid.local')
   const redirectUri = makeRedirectUri({ native: `${SCHEME}://auth` })
@@ -63,17 +69,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   // Resume a saved session on launch. Only the server refusing it signs the
-  // person out; no connection keeps the session and offers Retry.
+  // person out. No connection opens the app with the data saved on this
+  // phone (to work offline on site) or, with nothing saved, offers Retry.
   const resume = useCallback(async () => {
     setStatus('loading')
     setError(null)
     if (await session.refreshToken()) {
       try {
         setUser(await api<User>('/auth/me/'))
+        setOffline(false)
         setStatus('signed_in')
         return
       } catch (e) {
         if (!isApiError(e) || e.status === 0 || e.status >= 500) {
+          const saved = await cachedUser(offlineStorage()).catch(() => null)
+          if (saved) {
+            setUser(saved)
+            setOffline(true)
+            setStatus('signed_in')
+            return
+          }
           setError(errorMessage(e, 'CCA could not be reached. Try again.'))
           setStatus('unavailable')
           return
@@ -85,25 +100,45 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
   useEffect(() => { void resume() }, [resume])
 
+  // Opened offline: once the server can be reached, confirm the session and
+  // refresh the user (an ended session signs out through onExpired).
+  useEffect(() => {
+    if (!offline) return
+    let checking = false
+    const check = async () => {
+      if (checking || !isOnline()) return
+      checking = true
+      try {
+        setUser(await api<User>('/auth/me/'))
+        setOffline(false)
+      } catch { /* still unreachable, or signed out by onExpired */ } finally { checking = false }
+    }
+    void check()
+    return onConnectivity(() => { void check() })
+  }, [offline])
+
   const signOut = useCallback(async () => {
     try {
       const refresh = await session.refreshToken()
       if (refresh) await api('/auth/sign-out/', { body: { refresh } }).catch(() => undefined)
     } finally {
       await session.clear()
+      await clearCache(offlineStorage()).catch(() => undefined)
     }
+    setOffline(false)
     setUser(null)
     setStatus('signed_out')
   }, [])
 
   useEffect(() => session.onExpired(() => {
+    setOffline(false)
     setUser(null)
     setStatus('signed_out')
     setError('Your session ended. Sign in again to continue.')
   }), [])
 
   const value = useMemo<Ctx>(() => ({
-    status, user, error, busy,
+    status, user, error, busy, offline,
     microsoftConfigured: Boolean(CLIENT_ID && TENANT_ID),
     async signInWithMicrosoft() {
       setError(null)
@@ -140,7 +175,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     signOut,
     resume,
     hasRole: (...roles: Role[]) => Boolean(user && roles.includes(user.role)),
-  }), [status, user, error, busy, request, discovery, promptAsync, redirectUri, start, signOut, resume])
+  }), [status, user, error, busy, offline, request, discovery, promptAsync, redirectUri, start, signOut, resume])
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }

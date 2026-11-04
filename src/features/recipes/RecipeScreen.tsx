@@ -11,9 +11,11 @@ import { useLookups } from '@/api/hooks'
 import { useAuth } from '@/auth/AuthProvider'
 import { f2 } from '@/shared/calc'
 import type { Recipe } from '@/shared/types'
+import type { RecipeWithLock } from '@/shared/typesExt'
 import { Banner, Body, Button, Card, Chips, ErrorState, Field, H1, Loading, NumberField, Picker, Small, Strong, TextField } from '@/ui/kit'
 import { color, font, radius, TOUCH } from '@/ui/theme'
 
+import { FlagBanner } from '@/features/flags/FlagBanner'
 import { date } from '@/features/projects/format'
 import { ConfirmSheet } from '@/features/projects/Sheet'
 import { goBack } from '@/features/projects/TabHeader'
@@ -24,17 +26,22 @@ import { CompositionView, RecipeStatusChip } from './parts'
 export function RecipeScreen({ id }: { id: string }) {
   const isNew = id === 'new'
   const { hasRole } = useAuth()
-  const [editing, setEditing] = useState(isNew)
-  const q = useQuery({ queryKey: ['recipe', id], queryFn: () => api<Recipe>(`/recipes/${id}/`), enabled: !isNew })
+  // edit: change this recipe; version: a new version prefilled from it (a locked recipe cannot be changed).
+  const [mode, setMode] = useState<'view' | 'edit' | 'version'>(isNew ? 'edit' : 'view')
+  const q = useQuery({ queryKey: ['recipe', id], queryFn: () => api<RecipeWithLock>(`/recipes/${id}/`), enabled: !isNew })
   const canEdit = hasRole('AD', 'SAD', 'CT')
 
   if (isNew && !canEdit) return <Shell title="Recipe"><Body>Only Admins, Sales Admins and CTs can add recipes.</Body></Shell>
   if (!isNew && !q.data) {
     return <Shell title="Recipe">{q.isError ? <ErrorState error={q.error} onRetry={() => q.refetch()} /> : <Loading label="Loading recipe" />}</Shell>
   }
-  if (editing) return <RecipeForm recipe={q.data ?? null} onDone={() => setEditing(false)} />
-  return <RecipeDetail recipe={q.data!} canEdit={canEdit} onEdit={() => setEditing(true)} />
+  if (mode === 'version' && q.data) return <RecipeForm recipe={null} template={q.data} onDone={() => setMode('view')} />
+  if (mode === 'edit') return <RecipeForm recipe={q.data ?? null} onDone={() => setMode('view')} />
+  return <RecipeDetail recipe={q.data!} canEdit={canEdit} onEdit={() => setMode('edit')} onNewVersion={() => setMode('version')} />
 }
+
+/** "Used in 4 trials, so it is locked." */
+export const lockedNote = (n: number | undefined) => `Used in ${n === 1 ? '1 trial' : `${n ?? 'some'} trials`}, so it is locked.`
 
 function BackLink({ onPress }: { onPress?: () => void }) {
   return (
@@ -76,11 +83,27 @@ function Fact({ k, v }: { k: string; v: string }) {
   )
 }
 
-function RecipeDetail({ recipe: r, canEdit, onEdit }: { recipe: Recipe; canEdit: boolean; onEdit: () => void }) {
+export function RecipeDetail({ recipe: r, canEdit, onEdit, onNewVersion }: { recipe: RecipeWithLock; canEdit: boolean; onEdit: () => void; onNewVersion: () => void }) {
+  const qc = useQueryClient()
+  // On a locked recipe only the status (active or on hold) can still change.
+  const status = useMutation({
+    mutationFn: (next: Recipe['status']) => api<RecipeWithLock>(`/recipes/${r.id}/`, { method: 'PATCH', body: { status: next } }),
+    onSuccess: (saved) => { qc.setQueryData(['recipe', String(saved.id)], saved); void qc.invalidateQueries({ queryKey: ['recipes'] }) },
+  })
+  const footer = !canEdit ? undefined : r.locked ? (
+    <>
+      <Button title={r.status === 'active' ? 'Put on hold' : 'Make active'} busy={status.isPending}
+        onPress={() => status.mutate(r.status === 'active' ? 'on_hold' : 'active')} />
+      <Button title="Create new version" variant="primary" onPress={onNewVersion} />
+    </>
+  ) : <Button title="Edit recipe" variant="primary" onPress={onEdit} />
   return (
     <Shell title={`${r.product_name} V${r.version}`} right={<RecipeStatusChip status={r.status} />}
       sub={<Small style={{ fontSize: 14 }}>{[r.formulation_name || 'No formulation name yet', r.location_name].filter(Boolean).join(', ')}</Small>}
-      footer={canEdit ? <Button title="Edit recipe" variant="primary" onPress={onEdit} /> : undefined}>
+      footer={footer}>
+      {r.locked ? <Banner tone="info">{`${lockedNote(r.trial_count)} Changes go into a new version; the trials keep this one.`}</Banner> : null}
+      {status.isError ? <ErrorState error={status.error} /> : null}
+      <FlagBanner flags={r.flags} refresh={[['recipe', String(r.id)], ['recipes']]} what="recipe" />
       <Card title="RM composition">
         <CompositionView components={r.components} total={r.total} />
       </Card>
@@ -118,18 +141,22 @@ type FormKey = keyof Form
 type Body = Omit<Form, 'location'> & { location: number; components: Record<string, string>; confirm_new_version?: boolean }
 const BLANK: Form = { family: 'neutrol', product_name: '', sfdc_no: '', location: '', customer_name: '', project_name: '', status: 'active' }
 
-export function RecipeForm({ recipe, onDone }: { recipe: Recipe | null; onDone: () => void }) {
+/** recipe: edit it. recipe null: a new recipe, or with template a new version
+ * prefilled from that recipe (same product name and composition, saved
+ * through POST with the new version confirmation). */
+export function RecipeForm({ recipe, template, onDone }: { recipe: Recipe | null; template?: Recipe; onDone: () => void }) {
   const isNew = recipe === null
+  const source = recipe ?? template ?? null
   const { user, hasRole } = useAuth()
   const qc = useQueryClient()
   const cities = useLookups('city')
-  const [initial] = useState<Form>(() => recipe ? {
-    family: recipe.family, product_name: recipe.product_name, sfdc_no: recipe.sfdc_no, location: String(recipe.location),
-    customer_name: recipe.customer_name, project_name: recipe.project_name, status: recipe.status,
+  const [initial] = useState<Form>(() => source ? {
+    family: source.family, product_name: source.product_name, sfdc_no: source.sfdc_no, location: String(source.location),
+    customer_name: source.customer_name, project_name: source.project_name, status: source.status,
   } : BLANK)
   const [v, setV] = useState<Form>(initial)
   const [errors, setErrors] = useState<Partial<Record<FormKey, string>>>({})
-  const [initialRows] = useState<Row[]>(() => (recipe ? rowsOf(recipe.components) : []))
+  const [initialRows] = useState<Row[]>(() => (source ? rowsOf(source.components) : []))
   const [rows, setRows] = useState<Row[]>(initialRows)
   const [compError, setCompError] = useState<string>()
   const [formError, setFormError] = useState<string>()
@@ -161,6 +188,13 @@ export function RecipeForm({ recipe, onDone }: { recipe: Recipe | null; onDone: 
       if (isNew) { allowLeave(); router.replace(`/recipes/${saved.id}`) } else onDone()
     },
     onError: (e, body) => {
+      if (e instanceof ApiError && e.status === 409 && e.code === 'locked' && recipe) {
+        // Used by a trial since this form opened: say so plainly; the detail shows Create new version.
+        setVersionPrompt(null)
+        setFormError(e.message)
+        void qc.invalidateQueries({ queryKey: ['recipe', String(recipe.id)] })
+        return
+      }
       if (e instanceof ApiError && e.status === 409 && e.code === 'new_version') {
         setVersionPrompt({ message: e.message, body })
         return
@@ -195,18 +229,20 @@ export function RecipeForm({ recipe, onDone }: { recipe: Recipe | null; onDone: 
     else if (rowsBlank || !p.exact) comp = p.errors[0] ?? 'Fix the highlighted quantities so the total is exactly 100.00%.'
     setCompError(comp)
     if (!r.success || comp) return
-    save.mutate({ ...r.data, location: Number(r.data.location), components: compositionOf(rows) })
+    // A new version was asked for explicitly, so it is confirmed up front.
+    save.mutate({ ...r.data, location: Number(r.data.location), components: compositionOf(rows), ...(template ? { confirm_new_version: true } : {}) })
   }
 
   const errorCount = Object.values(errors).filter(Boolean).length + (compError ? 1 : 0)
   const cityOptions = (cities.data ?? []).map((c) => ({ value: String(c.id), label: c.value }))
-  if (recipe && !cityOptions.some((c) => c.value === String(recipe.location))) cityOptions.push({ value: String(recipe.location), label: recipe.location_name })
+  if (source && !cityOptions.some((c) => c.value === String(source.location))) cityOptions.push({ value: String(source.location), label: source.location_name })
 
   return (
-    <Shell title={isNew ? 'New recipe' : `Edit ${recipe.label}`} onBack={isNew ? undefined : cancel}
-      sub={!isNew && recipe.formulation_name ? <Small style={{ fontSize: 14 }}>Formulation {recipe.formulation_name}</Small> : undefined}
+    <Shell title={template ? `New version of ${template.product_name}` : isNew ? 'New recipe' : `Edit ${recipe.label}`} onBack={isNew && !template ? undefined : cancel}
+      sub={template ? <Small style={{ fontSize: 14 }}>{`Starts from V${template.version}. Change the composition; V${template.version} stays as it is for its trials.`}</Small>
+        : !isNew && recipe.formulation_name ? <Small style={{ fontSize: 14 }}>Formulation {recipe.formulation_name}</Small> : undefined}
       footer={<>
-        {isNew ? null : <Button title="Cancel" onPress={cancel} />}
+        {isNew && !template ? null : <Button title="Cancel" onPress={cancel} />}
         <Button title="Save recipe" variant="primary" busy={save.isPending} onPress={submit} />
       </>}>
       {tried && errorCount > 0 ? (
@@ -224,7 +260,7 @@ export function RecipeForm({ recipe, onDone }: { recipe: Recipe | null; onDone: 
         <View style={{ flexDirection: 'row', gap: 12 }}>
           <View style={{ flex: 1 }}>
             <Field label="Version">
-              <TextField accessibilityLabel="Version, set automatically" editable={false} value={recipe ? `V${recipe.version}` : 'New'} />
+              <TextField accessibilityLabel="Version, set automatically" editable={false} value={recipe ? `V${recipe.version}` : template ? 'Next version' : 'New'} />
             </Field>
           </View>
           <View style={{ flex: 1.4 }}>

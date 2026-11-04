@@ -11,6 +11,8 @@
 import Constants from 'expo-constants'
 import * as SecureStore from 'expo-secure-store'
 
+import { reportRequest } from '@/offline/connectivity'
+
 import { fieldErrors as flattenFieldErrors, SERVER } from './errors'
 
 const BASE: string = (Constants.expoConfig?.extra?.apiBase as string | undefined) ?? 'http://localhost:8000/api/v1'
@@ -160,8 +162,10 @@ export async function api<T = unknown>(path: string, opts: Options = {}, retried
     r = await timedFetch(url(path, opts.query), { method: opts.method ?? (body ? 'POST' : 'GET'), headers, body }, opts.timeoutMs ?? TIMEOUT_MS)
   } catch (e) {
     if (e instanceof Timeout) throw new ApiError(0, 'timeout', MESSAGES.timeout)
+    reportRequest(false)
     throw new ApiError(0, 'offline', MESSAGES.offline)
   }
+  reportRequest(true)
   if (r.status === 401 && !retried && !NO_REFRESH.includes(path)) {
     const result = await refresh()
     if (result === 'ok') return api<T>(path, opts, true)
@@ -176,6 +180,17 @@ export async function api<T = unknown>(path: string, opts: Options = {}, retried
     return (await r.json()) as T
   } catch {
     throw new ApiError(r.status, 'bad_response', SERVER)
+  }
+}
+
+/** Can the server be reached at all? Any HTTP answer counts (no sign in needed). */
+export async function ping(): Promise<boolean> {
+  try {
+    await timedFetch(`${BASE}/auth/me/`, { method: 'GET', headers: { Accept: 'application/json' } }, 10_000)
+    reportRequest(true)
+    return true
+  } catch {
+    return false
   }
 }
 

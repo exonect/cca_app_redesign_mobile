@@ -6,6 +6,7 @@ import Svg, { Circle, Polyline } from 'react-native-svg'
 
 import { api, type Page } from '@/api/client'
 import { useAuth } from '@/auth/AuthProvider'
+import { SyncChip } from '@/offline/ui'
 import type { ProjectListItem, TrialListItem } from '@/shared/types'
 import { Button, EmptyState, ErrorState, Loading, ProjectStatusChip, Small, Strong, TrialStatusChip } from '@/ui/kit'
 import { color, font, radius } from '@/ui/theme'
@@ -180,7 +181,7 @@ function TrialCard({ t, due }: { t: TrialListItem; due: CubeDue[] }) {
   const next = due.length ? dueLabel(due) : t.cast_at ? 'Open trial' : 'Finish mix design'
   return (
     <Shell onPress={() => router.push(`/trial/${t.id}`)} label={`${t.project_name}, ${t.customer_name}. ${left}. ${next}`}>
-      <Top title={t.project_name} sub={t.customer_name} chip={<TrialStatusChip status={t.status} />} />
+      <Top title={t.project_name} sub={t.customer_name} chip={<View style={{ alignItems: 'flex-end', gap: 4 }}><TrialStatusChip status={t.status} /><SyncChip trialId={t.id} /></View>} />
       <Foot left={left} right={next} />
     </Shell>
   )

@@ -1,11 +1,18 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { router } from 'expo-router'
-import { useState, type ReactNode } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import { Linking, Pressable, RefreshControl, ScrollView, Text, View } from 'react-native'
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import { api } from '@/api/client'
-import type { Project, ProjectStatus, Ref, Trial, TrialListItem } from '@/shared/types'
+import { useOnline } from '@/offline/connectivity'
+import { labelsFrom, useOutbox } from '@/offline/outbox'
+import { draftListItems, listItemView } from '@/offline/overlay'
+import { createTrial } from '@/offline/trialActions'
+import { NotOnPhone, SyncChip } from '@/offline/ui'
+import { FlagBanner } from '@/features/flags/FlagBanner'
+import type { Project, ProjectStatus, Ref, TrialListItem } from '@/shared/types'
+import type { ProjectWithFlags } from '@/shared/typesExt'
 import { Body, Button, Card, EmptyState, ErrorState, H1, H2, Loading, OutcomeChip, PROJECT_STATUS_LABEL, ProjectStatusChip, Small, Strong, TrialStatusChip } from '@/ui/kit'
 import { color, font, radius, TOUCH } from '@/ui/theme'
 
@@ -30,7 +37,8 @@ export function ProjectScreen({ id }: { id: string }) {
         <BackLink />
       </SafeAreaView>
       <View style={{ padding: 16 }}>
-        {q.isError ? <ErrorState error={q.error} onRetry={() => q.refetch()} /> : <Loading label="Loading the project" />}
+        {q.isError ? <ErrorState error={q.error} onRetry={() => q.refetch()} />
+          : q.fetchStatus === 'paused' ? <NotOnPhone what="project" /> : <Loading label="Loading the project" />}
       </View>
     </View>
   )
@@ -86,10 +94,15 @@ export function ProjectDetail({ project: p }: { project: Project }) {
     },
     onError: (e) => refreshAfterRefusal(qc, p.id, e),
   })
+  // The new trial gets its id on the phone, so it can be made offline and synced later.
   const startTrial = useMutation({
-    mutationFn: () => api<Trial>('/trials/', { body: { project: p.id } }),
+    mutationFn: () => createTrial(qc, p),
     onMutate: () => setStartError(null),
-    onSuccess: (t) => { invalidateProject(qc, p.id); router.push(`/trial/${t.id}`) },
+    onSuccess: ({ trial: t, queued }) => {
+      if (queued) setNotice('Trial saved on this phone. It syncs when you are back online.')
+      else invalidateProject(qc, p.id)
+      router.push(`/trial/${t.id}`)
+    },
     onError: (e) => { setStartError(e); refreshAfterRefusal(qc, p.id, e) },
   })
 
@@ -143,6 +156,7 @@ export function ProjectDetail({ project: p }: { project: Project }) {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}>
         <Notice text={notice} onDone={clearNotice} />
         {startError ? <ErrorState error={startError} /> : null}
+        <FlagBanner flags={(p as ProjectWithFlags).flags} refresh={[projectKeys.detail(p.id), ['projects']]} what="project" />
         <RequirementCard p={p} />
         <TrialsSection p={p} q={trials} onStart={a.start_trial ? () => startTrial.mutate() : undefined} starting={startTrial.isPending} />
         <CustomerCard p={p} />
@@ -219,11 +233,20 @@ function RequirementCard({ p }: { p: Project }) {
 function TrialsSection({ p, q, onStart, starting }: {
   p: Project; q: ReturnType<typeof useProjectTrials>; onStart?: () => void; starting: boolean
 }) {
-  const trials = q.data?.results ?? []
+  const qc = useQueryClient()
+  const ops = useOutbox()
+  const online = useOnline()
+  // Trials made on this phone that the server has not seen yet come first, then the server's list.
+  const trials = useMemo(() => {
+    const server = (q.data?.results ?? []).map((t) => listItemView(t, ops))
+    const local = draftListItems(ops, p.id, labelsFrom(qc)).filter((t) => !server.some((x) => x.id === t.id))
+    return [...local, ...server]
+  }, [q.data, ops, p.id, qc])
   return (
     <View style={{ gap: 8 }}>
       <H2>Trials</H2>
       {q.isLoading ? <Loading label="Loading trials" /> : null}
+      {q.isPending && q.fetchStatus === 'paused' && !online && trials.length === 0 ? <Small>The trial list is not saved on this phone yet.</Small> : null}
       {q.isError ? <ErrorState error={q.error} onRetry={() => q.refetch()} /> : null}
       {q.isSuccess && trials.length === 0 ? (
         <Card>
@@ -256,7 +279,10 @@ function TrialRow({ t, n }: { t: TrialListItem; n: number }) {
         <Strong numberOfLines={1}>{t.product ?? t.code ?? 'Draft trial'}</Strong>
         <Small style={{ fontSize: 14 }} numberOfLines={2}>{detail || (t.code ?? '')}</Small>
       </View>
-      {chip}
+      <View style={{ alignItems: 'flex-end', gap: 4 }}>
+        {chip}
+        <SyncChip trialId={t.id} />
+      </View>
     </Pressable>
   )
 }

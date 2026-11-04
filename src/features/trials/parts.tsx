@@ -6,7 +6,7 @@ import Svg, { Path, Polyline } from 'react-native-svg'
 import { Button, Small } from '@/ui/kit'
 import { color, font, radius, TOUCH } from '@/ui/theme'
 
-import { useWorkspace } from './workspace'
+import { savedNotice, useWorkspace } from './workspace'
 
 /** Compact right aligned numeric cell for lab tables (44 high, 6 px radius, decimal pad). */
 export function CellInput({ invalid, editable = true, style, ...rest }: TextInputProps & { invalid?: boolean }) {
@@ -147,7 +147,7 @@ export function StepFooter({ children, note }: { children: ReactNode; note?: str
 export function StepActions({ canSave, label }: { canSave: boolean; label: string }) {
   const { trial, step, dirty, saving, saveAll, next, startTrial, starting, notify } = useWorkspace()
   async function save() {
-    if (await saveAll()) notify({ tone: 'ok', text: `${label} saved` })
+    if (await saveAll()) notify(savedNotice(trial.id, `${label} saved`))
   }
   const nextTitle = ['Next: mix design', 'Next: fresh concrete', 'Next: cube strength', 'Next: conclusion'][step - 1]
   return (

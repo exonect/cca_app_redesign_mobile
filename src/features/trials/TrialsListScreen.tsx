@@ -6,6 +6,7 @@ import { useEffect, useState } from 'react'
 import { FlatList, Pressable, RefreshControl, Text, View } from 'react-native'
 
 import { api, type Page } from '@/api/client'
+import { SyncChip } from '@/offline/ui'
 import { AGES } from '@/shared/calc'
 import type { TrialListItem, TrialStatus } from '@/shared/types'
 import { Chips, EmptyState, ErrorState, Header, Loading, OutcomeChip, Small, TextField, TrialStatusChip } from '@/ui/kit'
@@ -72,6 +73,7 @@ export function TrialsListScreen() {
             style={({ pressed }) => ({ backgroundColor: pressed ? color.head : color.surface, borderWidth: 1, borderColor: color.line, borderRadius: radius.card, padding: 14, gap: 6 })}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
               <Text numberOfLines={1} style={{ flex: 1, fontFamily: font.condBold, fontSize: 17, color: color.ink }}>{t.code ?? 'Draft trial'}</Text>
+              <SyncChip trialId={t.id} />
               <TrialStatusChip status={t.status} />
             </View>
             <Text numberOfLines={1} style={{ fontFamily: font.semibold, fontSize: 15, color: color.ink }}>{t.project_name}</Text>
