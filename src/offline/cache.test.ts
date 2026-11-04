@@ -7,7 +7,7 @@ import { CACHE_MAX_AGE_MS, cachedUser, clearCache, persistOnChange, restoreCache
 import { memoryStorage } from './storage'
 
 const user = { id: 7, full_name: 'Sneha Rao', role: 'CT' } as User
-const q = (queryKey: unknown[], status = 'success') => ({ queryKey, state: { status } }) as Parameters<typeof shouldPersist>[0]
+const q = (queryKey: unknown[], status = 'success') => ({ queryKey, state: { status } }) as unknown as Parameters<typeof shouldPersist>[0]
 
 function filled() {
   const qc = new QueryClient({ defaultOptions: { queries: { gcTime: Infinity } } })

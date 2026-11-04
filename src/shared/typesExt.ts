@@ -24,7 +24,15 @@ export type UserWithManagerSource = User & {
 export type FlagTarget = 'project' | 'trial' | 'recipe'
 export type FlagStatus = 'open' | 'accepted' | 'corrected'
 /** An open flag as listed on a project, trial or recipe detail response. */
-export type RecordFlag = { id: number; field: string; field_label: string; value: string; reason: string }
+export type RecordFlag = {
+  id: number; field: string; field_label: string; value: string; reason: string
+  /** For a flag on a whole object (proportions, a recipe composition, cementitious contents), its value; null for one value. */
+  value_json?: Record<string, string | number | null> | (string | number)[] | null
+  /** Plain labels per key of value_json ({"river_sand": "River sand"}), null for lists and single values. */
+  value_labels?: Record<string, string> | null
+}
+/** What Correct sends: text for one value, an object or list for a whole object. */
+export type CorrectedValue = string | Record<string, string> | string[]
 export type DataFlag = RecordFlag & {
   target: FlagTarget; object_id: string; record_label: string; project_id: string | null; trial_id: string | null
   status: FlagStatus; note: string; created_at: string; resolved_by: { id: number; name: string } | null; resolved_at: string | null

@@ -27,6 +27,11 @@ jest.mock('@/api/client', () => {
     session: { refreshToken: jest.fn(async () => 'r1'), clear: jest.fn(async () => undefined), set: jest.fn(), onExpired: () => () => undefined },
   }
 })
+jest.mock('@/offline/storage', () => {
+  const { memoryStorage } = jest.requireActual('@/offline/storage')
+  const store = memoryStorage()
+  return { memoryStorage, offlineStorage: () => store }
+})
 const mockApi = api as jest.MockedFunction<typeof api>
 const { ApiError } = jest.requireMock('@/api/client')
 
@@ -66,5 +71,22 @@ describe('Microsoft sign in result', () => {
     expect(microsoftResultMessage({ type: 'error', params: { error: 'access_denied' } })).toMatch('cancelled or not allowed')
     expect(microsoftResultMessage({ type: 'error', params: { error: 'server_error' } })).toBe('Microsoft sign in did not finish. Try again.')
     expect(microsoftResultMessage({ type: 'locked' })).toMatch('already open')
+  })
+})
+
+describe('working offline', () => {
+  it('opens with the user saved on this phone when the server cannot be reached', async () => {
+    const { offlineStorage } = jest.requireMock('@/offline/storage')
+    await offlineStorage().write('cache.json', JSON.stringify({ v: 1, userId: 7, savedAt: Date.now(), user: { id: 7, role: 'CT', full_name: 'Sneha Rao' }, state: { queries: [], mutations: [] } }))
+    mockApi.mockRejectedValue(new ApiError(0, 'offline', 'No connection.'))
+    function Who() {
+      const { status, user, offline } = useAuth()
+      return <Text>{`${status}|${user?.full_name ?? ''}|${offline}`}</Text>
+    }
+    await render(<AuthProvider><Who /></AuthProvider>)
+    expect(await screen.findByText('signed_in|Sneha Rao|true')).toBeTruthy()
+    expect(session.clear).not.toHaveBeenCalled()
+    await offlineStorage().remove('cache.json')
+    mockApi.mockReset()
   })
 })
