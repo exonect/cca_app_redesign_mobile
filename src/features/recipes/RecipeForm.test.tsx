@@ -60,3 +60,26 @@ it('leaves straight away when nothing changed', async () => {
   alert.mockRestore()
   qc.clear()
 })
+
+it('starts a new recipe with no family and needs a 6 digit SFDC number; the product name is optional', async () => {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { retry: false, gcTime: Infinity } } })
+  await render(<QueryClientProvider client={qc}><RecipeForm recipe={null} onDone={jest.fn()} /></QueryClientProvider>)
+  await fireEvent.press(screen.getByRole('button', { name: 'Save recipe' }))
+  expect(await screen.findByText('Choose the product family.')).toBeTruthy()
+  expect(screen.getByText('Enter the 6 digit SFDC number.')).toBeTruthy()
+  expect(screen.queryByText('Enter the product name.')).toBeNull()
+  expect(screen.queryByText('Other')).toBeNull()
+  await fireEvent.changeText(screen.getByLabelText('SFDC number'), '12345')
+  await fireEvent.press(screen.getByRole('button', { name: 'Save recipe' }))
+  expect(await screen.findByText('Enter all 6 digits of the SFDC number, including leading zeros.')).toBeTruthy()
+  expect(mockApi).not.toHaveBeenCalledWith('/recipes/', expect.anything())
+  qc.clear()
+})
+
+it('keeps the SFDC number fixed once the formulation name exists', async () => {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { retry: false, gcTime: Infinity } } })
+  await render(<QueryClientProvider client={qc}><RecipeForm recipe={{ ...recipe, formulation_name: 'N-Lab-123456-E2-1126-01', sfdc_no: '123456' }} onDone={jest.fn()} /></QueryClientProvider>)
+  expect(screen.getByLabelText('SFDC number').props.editable).toBe(false)
+  expect(screen.getByLabelText('Product family, fixed').props.value).toBe('Neutrol')
+  qc.clear()
+})

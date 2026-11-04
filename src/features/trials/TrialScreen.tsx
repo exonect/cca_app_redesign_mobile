@@ -26,6 +26,7 @@ import { color, font, TOUCH } from '@/ui/theme'
 import { ConclusionStep } from './ConclusionStep'
 import { CubesStep } from './CubesStep'
 import { downloadAndShare } from './download'
+import { downloadTrialExcel } from './excel'
 import { parseStep, STEPS, stepDone, type StepNo } from './forms'
 import { FreshStep } from './FreshStep'
 import { MixStep } from './MixStep'
@@ -176,9 +177,25 @@ function Workspace({ trial, project, projectError, step }: { trial: Trial; proje
     finally { setPdfBusy(false) }
   }
 
+  // Legacy trial row menu: "Download in PDF" and "Download in Excel" (Excel for started and closed trials).
+  async function excel() {
+    setPdfBusy(true)
+    try { await downloadTrialExcel({ trial: trial.id }) }
+    catch (e) { notify({ tone: 'error', text: errorMessage(e, 'The Excel file could not be downloaded. Try again.') }) }
+    finally { setPdfBusy(false) }
+  }
+  function chooseDownload() {
+    if (trial.status === 'draft') { void pdf(); return }
+    Alert.alert('Download this trial', undefined, [
+      { text: 'PDF report', onPress: () => { void pdf() } },
+      { text: 'Excel', onPress: () => { void excel() } },
+      { text: 'Cancel', style: 'cancel' },
+    ])
+  }
+
   const done = stepDone(trial, project)
   const header = (
-    <TrialHeader trial={trial} project={project} step={step} done={done} onStep={(n) => goTo(n)} onPdf={pdf} pdfBusy={pdfBusy} />
+    <TrialHeader trial={trial} project={project} step={step} done={done} onStep={(n) => goTo(n)} onPdf={chooseDownload} pdfBusy={pdfBusy} />
   )
 
   const value: WorkspaceValue = useMemo(() => ({
@@ -238,7 +255,7 @@ function TrialHeader({ trial, project, step, done, onStep, onPdf, pdfBusy }: {
           </Text>
         </View>
         <TrialStatusChip status={trial.status} />
-        <Pressable accessibilityRole="button" accessibilityLabel="Download PDF" accessibilityState={{ busy: pdfBusy, disabled: pdfBusy }}
+        <Pressable accessibilityRole="button" accessibilityLabel={trial.status === 'draft' ? 'Download PDF' : 'Download PDF or Excel'} accessibilityState={{ busy: pdfBusy, disabled: pdfBusy }}
           disabled={pdfBusy} onPress={onPdf} style={{ width: TOUCH, height: TOUCH, alignItems: 'center', justifyContent: 'center', opacity: pdfBusy ? 0.5 : 1 }}>
           <Svg width={22} height={22} viewBox="0 0 24 24" fill="none" stroke={color.ink} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
             <Path d="M12 4v11" /><Polyline points="7 10 12 15 17 10" /><Path d="M5 19h14" />

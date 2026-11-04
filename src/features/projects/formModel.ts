@@ -93,11 +93,48 @@ export const STEP1_FIELDS: FormField[] = [
   'customer_name', 'project_name', 'contact_person_name', 'contact_email', 'contact_phone', 'sales_person', 'sfdc_no',
   'region', 'city', 'potential_cr', 'remarks',
 ]
-/** Step 1 fields the server requires on submit (REQUIRED_ON_SUBMIT). */
+/** Step 1 fields the server requires on submit (REQUIRED_ON_SUBMIT). Remarks are required, as in the legacy app. */
 export const STEP1_REQUIRED: FormField[] = [
   'customer_name', 'project_name', 'contact_person_name', 'contact_email', 'contact_phone', 'sales_person', 'sfdc_no',
-  'region', 'city', 'potential_cr',
+  'region', 'city', 'potential_cr', 'remarks',
 ]
+
+/**
+ * Legacy wizard rules checked on Continue, Create project and Save changes (not on Save draft),
+ * mirroring the server (cca.projects.workflow.rule_problems): 3 characters minimum, contact name
+ * letters (dots, apostrophes and hyphens allowed), potential above 0, a typed price not 0.
+ */
+export const MIN_TEXT = 3
+const NAME_CHARS = /^[A-Za-zÀ-ÖØ-öø-ÿ .'-]*$/
+export function ruleProblems(v: ProjectFormValues, only?: FormField[]): FormErrors {
+  const out: FormErrors = {}
+  const want = (f: FormField) => !only || only.includes(f)
+  for (const f of ['customer_name', 'project_name', 'contact_person_name'] as const) {
+    const t = v[f].trim()
+    if (!want(f) || t === '') continue
+    if (t.length < MIN_TEXT) out[f] = `Use at least ${MIN_TEXT} characters.`
+    else if (f === 'contact_person_name' && !NAME_CHARS.test(t)) out[f] = 'Use letters, spaces, dots, apostrophes and hyphens only.'
+  }
+  const n = (s: string) => (s.trim() === '' || Number.isNaN(Number(s)) ? null : Number(s))
+  if (want('potential_cr') && n(v.potential_cr) !== null && n(v.potential_cr)! <= 0) out.potential_cr = 'Project potential must be more than 0.'
+  for (const f of ['selling_basic_price', 'bulk_and_barrel'] as const) {
+    if (want(f) && n(v[f]) === 0) out[f] = 'Enter a price above 0, or leave it blank.'
+  }
+  return out
+}
+
+/** Only the fields whose value differs from the saved project (the server checks changes only). */
+export function changedFields(v: ProjectFormValues, saved: ProjectFormValues): FormField[] {
+  return (Object.keys(v) as FormField[]).filter((f) => JSON.stringify(v[f]) !== JSON.stringify(saved[f]))
+}
+
+/** Cementitious content options: the master list (whole numbers), plus values already on the
+ * project that are no longer listed, so they can be kept or removed. */
+export function cementitiousOptions(list: Lookup[] | undefined, current: number[]) {
+  const listed = [...new Set((list ?? []).map((o) => Number(o.value)).filter((x) => Number.isInteger(x)))].sort((a, b) => a - b)
+  const kept = [...new Set(current)].filter((x) => !listed.includes(x))
+  return [...listed.map((x) => ({ value: x, label: String(x) })), ...kept.map((x) => ({ value: x, label: `${x} (not in the list)` }))]
+}
 
 export const isFormField = (k: string): k is FormField => k in EMPTY
 
@@ -118,26 +155,6 @@ export function stepForErrors(fields: string[]): 1 | 2 | null {
   const known = fields.filter(isFormField)
   if (known.length === 0) return null
   return known.some((f) => STEP1_FIELDS.includes(f)) ? 1 : 2
-}
-
-/** Why a typed cementitious content cannot be added to the list, or null. */
-export function cementitiousProblem(text: string, list: number[]): string | null {
-  const t = text.trim()
-  if (!/^\d+$/.test(t) || Number(t) < 100 || Number(t) > 999) return 'Enter a whole number from 100 to 999 kg/m³.'
-  if (list.includes(Number(t))) return `${Number(t)} kg/m³ is already in the list.`
-  if (list.length >= CEMENTITIOUS_MAX) return `Enter up to ${CEMENTITIOUS_MAX} cementitious contents.`
-  return null
-}
-
-/**
- * A value typed in the cementitious box but not added with Add would be lost
- * on save. A valid one is added; anything else is an error to fix first.
- */
-export function withPendingCementitious(v: ProjectFormValues, text: string): { values: ProjectFormValues; error?: string } {
-  if (!text.trim()) return { values: v }
-  const problem = cementitiousProblem(text, v.cementitious_contents)
-  if (problem) return { values: v, error: `${problem} Fix or clear the value you typed, then save again.` }
-  return { values: { ...v, cementitious_contents: [...v.cementitious_contents, Number(text.trim())].sort((a, b) => a - b) } }
 }
 
 /** Fields required on submit that the server keeps filled once the project is past draft

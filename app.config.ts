@@ -57,6 +57,8 @@ const config: ExpoConfig = {
     entraClientId: env.EXPO_PUBLIC_ENTRA_CLIENT_ID,
     entraTenantId: env.EXPO_PUBLIC_ENTRA_TENANT_ID,
     devLogin: env.EXPO_PUBLIC_DEV_LOGIN === 'true',
+    // Power BI report opened from More (Admins), as the old app's Power BI screen.
+    powerBiUrl: env.EXPO_PUBLIC_POWERBI_URL,
   },
 }
 

@@ -11,7 +11,7 @@ jest.mock('expo-router', () => ({ router: { push: jest.fn(), replace: jest.fn(),
 describe('master data values', () => {
   it('trims, needs a value, caps at 200 and takes numbers only on numeric lists', () => {
     expect(lookupValueProblem('   ', false)).toBe('Enter a value.')
-    expect(lookupValueProblem('x'.repeat(201), false)).toBe('Use 200 characters or fewer.')
+    expect(lookupValueProblem('x'.repeat(101), false)).toBe('Use 100 characters or fewer.')  // legacy list length
     expect(lookupValueProblem('0.40 ', true)).toBeNull()
     expect(lookupValueProblem('NaN', true)).toBe(NUMERIC_MESSAGE)
     expect(lookupValueProblem('Neutrol  1112 ', false)).toBeNull()
@@ -19,7 +19,7 @@ describe('master data values', () => {
 })
 
 describe('users', () => {
-  const base = { email: 'a@thermaxglobal.com', emp_id: 'E1', first_name: 'Asha', last_name: '', role: 'SP' as const, region: '', manager: '' }
+  const base = { email: 'a@thermaxglobal.com', emp_id: 'E1001', first_name: 'Asha', last_name: 'Nair', role: 'SP' as const, region: '', manager: '' }
   it('caps employee ID at 20 and names at 150, and lowercases the email', () => {
     const r = userSchema.safeParse({ ...base, emp_id: 'E'.repeat(21), last_name: 'x'.repeat(151) })
     expect(r.success).toBe(false)
@@ -56,5 +56,25 @@ describe('final server rules for master data and recipes', () => {
     expect(p.exact).toBe(false)
     expect(p.errors[0]).toBe('R101 can have up to 2 decimal places.')
     expect(preview([{ code: 'R101', pct: '12.34' }]).exact).toBe(true)
+  })
+})
+
+describe('legacy user rules', () => {
+  const base = { email: 'a@thermaxglobal.com', emp_id: 'E1001', first_name: 'Asha', last_name: 'Nair', role: 'SP' as const, region: '', manager: '' }
+  it('needs a last name and 3 characters for names and employee ID', () => {
+    const r = userSchema.safeParse({ ...base, first_name: 'Al', last_name: '', emp_id: 'E1' })
+    const msgs = r.success ? [] : r.error.issues.map((i) => i.message)
+    expect(msgs).toEqual(expect.arrayContaining(['The first name needs at least 3 characters.', 'Enter the last name.',
+      'The employee ID needs at least 3 characters.']))
+    expect(userSchema.safeParse({ ...base, last_name: "D'Souza" }).success).toBe(true)
+  })
+})
+
+describe('legacy master data rules', () => {
+  it('fixes regions, whole number cementitious content and list lengths', () => {
+    expect(lookupValueProblem('Konkan', false, 'region')).toMatch(/Regions are fixed/)
+    expect(lookupValueProblem('north-east', false, 'region')).toBeNull()
+    expect(lookupValueProblem('420.5', true, 'cementitious_content')).toMatch(/whole number/)
+    expect(lookupValueProblem('x'.repeat(1000), false, 'fine_aggregate_source')).toBeNull()
   })
 })

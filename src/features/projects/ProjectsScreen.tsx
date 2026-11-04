@@ -23,7 +23,8 @@ export function ProjectsScreen() {
 
   const base = { search: search || undefined }
   const pipeline = usePipeline(base)
-  const list = useProjectPages({ ...base, status: status || undefined, ordering: '-updated_at' })
+  // Legacy lists: newest created first.
+  const list = useProjectPages({ ...base, status: status || undefined, ordering: '-created_at' })
   const { refreshing, onRefresh } = useRefresh(() => Promise.all([list.refetch(), pipeline.refetch()]))
   const canCreate = !hasRole('CT')
 
@@ -41,7 +42,7 @@ export function ProjectsScreen() {
             <Text style={{ fontFamily: font.semibold, fontSize: 15, color: '#fff' }}>New project</Text>
           </Pressable>
         ) : null}>
-        <TextField accessibilityLabel="Search projects" placeholder="Search project, customer or SFDC" value={text} onChangeText={setText}
+        <TextField accessibilityLabel="Search projects" placeholder="Search project, customer, SFDC, Sales Person or CT" value={text} onChangeText={setText}
           returnKeyType="search" autoCorrect={false} clearButtonMode="while-editing" />
       </TabHeader>
 
@@ -68,7 +69,7 @@ export function ProjectsScreen() {
             {list.isSuccess ? (
               <View accessibilityLiveRegion="polite">
                 <Small style={{ fontSize: 14 }}>
-                  {plural(list.count, 'project')} {scope}{status ? `, ${filters.find((f) => f.status === status)?.label.toLowerCase() ?? ''}` : ''}, newest activity first
+                  {plural(list.count, 'project')} {scope}{status ? `, ${filters.find((f) => f.status === status)?.label.toLowerCase() ?? ''}` : ''}, newest first
                 </Small>
               </View>
             ) : null}

@@ -19,11 +19,11 @@ jest.mock('react-native-safe-area-context', () => require('react-native-safe-are
 jest.mock('@/auth/AuthProvider', () => ({ useAuth: () => ({ user: { id: 1, full_name: 'Neha Admin' }, hasRole: (...r: string[]) => r.includes('AD') }) }))
 
 const user = (over: Partial<User>): User => ({
-  id: 1, email: 'neha@thermaxglobal.com', emp_id: 'E1', first_name: 'Neha', last_name: 'Admin', full_name: 'Neha Admin', role: 'AD',
+  id: 1, email: 'neha@thermaxglobal.com', emp_id: 'E1001', first_name: 'Neha', last_name: 'Admin', full_name: 'Neha Admin', role: 'AD',
   role_label: 'Admin', region: null, region_name: null, manager: null, manager_name: null, is_active: true, last_login: null, ...over,
 })
 const me = user({})
-const other = user({ id: 2, email: 'ravi@thermaxglobal.com', emp_id: 'E2', first_name: 'Ravi', last_name: 'CT', full_name: 'Ravi CT', role: 'CT', role_label: 'CT' })
+const other = user({ id: 2, email: 'ravi@thermaxglobal.com', emp_id: 'E1002', first_name: 'Ravi', last_name: 'Kumar', full_name: 'Ravi Kumar', role: 'CT', role_label: 'CT' })
 
 const newClient = () => new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { retry: false, gcTime: Infinity } } })
 
@@ -40,7 +40,7 @@ beforeEach(() => {
 it('locks the role and hides Deactivate on the signed in Admin, and does not send a role for them', async () => {
   const qc = newClient()
   await render(<QueryClientProvider client={qc}><UsersScreen /></QueryClientProvider>)
-  expect(await screen.findByRole('button', { name: 'Deactivate Ravi CT' })).toBeTruthy()
+  expect(await screen.findByRole('button', { name: 'Deactivate Ravi Kumar' })).toBeTruthy()
   expect(screen.queryByRole('button', { name: 'Deactivate Neha Admin' })).toBeNull()
 
   await fireEvent.press(screen.getByRole('button', { name: 'Edit Neha Admin' }))
@@ -56,7 +56,7 @@ it('locks the role and hides Deactivate on the signed in Admin, and does not sen
 it('still offers the role choice on other users', async () => {
   const qc = newClient()
   await render(<QueryClientProvider client={qc}><UsersScreen /></QueryClientProvider>)
-  await fireEvent.press(await screen.findByRole('button', { name: 'Edit Ravi CT' }))
+  await fireEvent.press(await screen.findByRole('button', { name: 'Edit Ravi Kumar' }))
   expect(await screen.findByRole('radio', { name: /^Sales Person\./ })).toBeTruthy()
   expect(screen.queryByText('You cannot change your own role. Ask another Admin.')).toBeNull()
   qc.clear()
@@ -74,7 +74,7 @@ describe('manager source (set in CCA or from Entra ID)', () => {
     })
     const qc = newClient()
     await render(<QueryClientProvider client={qc}><UsersScreen /></QueryClientProvider>)
-    await fireEvent.press(await screen.findByRole('button', { name: 'Edit Ravi CT' }))
+    await fireEvent.press(await screen.findByRole('button', { name: 'Edit Ravi Kumar' }))
     expect(await screen.findByText(/^Manager source: From Entra ID/)).toBeTruthy()
     await fireEvent.changeText(screen.getByLabelText('Last name'), 'Kumar')
     await fireEvent.press(screen.getByRole('button', { name: 'Save user' }))

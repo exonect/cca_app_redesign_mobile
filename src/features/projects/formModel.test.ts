@@ -1,5 +1,5 @@
 import {
-  cementitiousProblem, EMPTY, missingStep1, priceMissing, requiredAfterDraft, stepForErrors, toPayload, validate, withPendingCementitious,
+  cementitiousOptions, changedFields, EMPTY, missingStep1, priceMissing, requiredAfterDraft, ruleProblems, stepForErrors, toPayload, validate,
 } from './formModel'
 
 describe('project form model', () => {
@@ -53,17 +53,26 @@ describe('final server rules for projects', () => {
     expect(validate({ ...EMPTY, cementitious_contents: ten })).toEqual({})
     expect(validate({ ...EMPTY, cementitious_contents: [...ten, 500] }).cementitious_contents).toBe('Enter up to 10 cementitious contents.')
     expect(validate({ ...EMPTY, cementitious_contents: [420, 420] }).cementitious_contents).toBe('Each cementitious content can be entered once.')
-    expect(cementitiousProblem('430', ten)).toBe('Enter up to 10 cementitious contents.')
-    expect(cementitiousProblem('420', [420])).toBe('420 kg/m³ is already in the list.')
-    expect(cementitiousProblem('42.5', [])).toBe('Enter a whole number from 100 to 999 kg/m³.')
   })
 
-  it('adds a typed but not added cementitious value on save, or says what to fix', () => {
-    expect(withPendingCementitious({ ...EMPTY, cementitious_contents: [450] }, ' 420 ').values.cementitious_contents).toEqual([420, 450])
-    expect(withPendingCementitious(EMPTY, '').values).toBe(EMPTY)
-    const bad = withPendingCementitious({ ...EMPTY, cementitious_contents: [420] }, '420')
-    expect(bad.error).toBe('420 kg/m³ is already in the list. Fix or clear the value you typed, then save again.')
-    expect(bad.values.cementitious_contents).toEqual([420])
+  it('offers cementitious contents from the master list, keeping unlisted values already on the project', () => {
+    const list = [{ id: 1, value: '450' }, { id: 2, value: '400' }, { id: 3, value: '400.5' }] as Parameters<typeof cementitiousOptions>[0]
+    expect(cementitiousOptions(list, [380, 400])).toEqual([
+      { value: 400, label: '400' }, { value: 450, label: '450' }, { value: 380, label: '380 (not in the list)' },
+    ])
+  })
+
+  it('mirrors the legacy wizard rules the server checks on submit', () => {
+    expect(ruleProblems({ ...EMPTY, customer_name: 'AB', project_name: ' Ok ', contact_person_name: 'Dr. A. Kumar' })).toEqual({
+      customer_name: 'Use at least 3 characters.', project_name: 'Use at least 3 characters.',
+    })
+    for (const ok of ["D'Souza", 'Anne-Marie Lobo', 'José Müller', '']) expect(ruleProblems({ ...EMPTY, contact_person_name: ok })).toEqual({})
+    expect(ruleProblems({ ...EMPTY, contact_person_name: 'Prakash 2' }).contact_person_name).toBe('Use letters, spaces, dots, apostrophes and hyphens only.')
+    expect(ruleProblems({ ...EMPTY, potential_cr: '0', selling_basic_price: '0.00', bulk_and_barrel: '64' })).toEqual({
+      potential_cr: 'Project potential must be more than 0.', selling_basic_price: 'Enter a price above 0, or leave it blank.',
+    })
+    expect(missingStep1(EMPTY, false)).toContain('remarks')
+    expect(changedFields({ ...EMPTY, remarks: 'x' }, EMPTY)).toEqual(['remarks'])
   })
 
   it('keeps fields required on submit filled once past draft', () => {

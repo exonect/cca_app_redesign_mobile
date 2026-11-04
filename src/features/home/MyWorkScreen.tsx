@@ -11,7 +11,7 @@ import type { ProjectListItem, TrialListItem } from '@/shared/types'
 import { Button, EmptyState, ErrorState, Loading, ProjectStatusChip, Small, Strong, TrialStatusChip } from '@/ui/kit'
 import { color, font, radius } from '@/ui/theme'
 
-import { useProjects } from '@/features/projects/api'
+import { usePipeline, useProjects } from '@/features/projects/api'
 import { AssignCtSheet } from '@/features/projects/AssignCtSheet'
 import { CompleteSheet } from '@/features/projects/CompleteSheet'
 import { plural, relative } from '@/features/projects/format'
@@ -21,6 +21,7 @@ import { Notice } from '@/features/projects/Sheet'
 import { DarkSegmented, TabHeader } from '@/features/projects/TabHeader'
 
 import { dueLabel, type CubeDue } from './cubesDue'
+import { StatsTiles } from './StatsTiles'
 
 type Tab = 'trials' | 'assigned' | 'drafts' | 'complete' | 'assign'
 type Item =
@@ -83,7 +84,9 @@ export function MyWorkScreen() {
   const queries = manager ? [support, closed] : ct ? [assigned, trials] : [drafts, closed, trials]
   const loading = queries.some((q) => q.isLoading)
   const failed = queries.find((q) => q.isError)
-  const { refreshing, onRefresh } = useRefresh(() => Promise.all([...queries.map((q) => q.refetch()), due.refetch()]))
+  // Legacy dashboard statistics tiles (projects, trials, met and below %, potential).
+  const stats = usePipeline()
+  const { refreshing, onRefresh } = useRefresh(() => Promise.all([...queries.map((q) => q.refetch()), due.refetch(), stats.refetch()]))
 
   const dueTrials = (trials.data?.results ?? []).filter((t) => (dueById[t.id] ?? []).length > 0)
   const dueCount = dueTrials.reduce((n, t) => n + dueById[t.id].length, 0)
@@ -103,6 +106,7 @@ export function MyWorkScreen() {
         ListHeaderComponent={
           <View style={{ gap: 12 }}>
             <Notice text={notice} onDone={clearNotice} />
+            <StatsTiles data={stats.data} admin={hasRole('AD')} />
             {dueCount > 0 ? <DueBanner count={dueCount} names={dueTrials.map((t) => t.project_name)} /> : null}
           </View>
         }

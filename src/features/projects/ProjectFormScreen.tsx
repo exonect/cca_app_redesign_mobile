@@ -15,8 +15,8 @@ import { color, font, radius, TOUCH } from '@/ui/theme'
 import { invalidateProject, storeProject, useProject, useSalesPersons } from './api'
 import { num } from './format'
 import {
-  CATEGORY, cementitiousProblem, EMPTY, fromProject, isFormField, LABELS, missingStep1, PRICE_MESSAGE, priceMissing, REMARKS_MAX,
-  requiredAfterDraft, stepForErrors, STEP1_FIELDS, toPayload, validate, withCurrent, withPendingCementitious, type FkField,
+  CATEGORY, cementitiousOptions, CEMENTITIOUS_MAX, changedFields, EMPTY, fromProject, isFormField, LABELS, missingStep1, PRICE_MESSAGE,
+  priceMissing, REMARKS_MAX, requiredAfterDraft, ruleProblems, stepForErrors, STEP1_FIELDS, toPayload, validate, withCurrent, type FkField,
   type FormErrors, type FormField, type M2mField, type ProjectFormValues,
 } from './formModel'
 import { goBack } from './TabHeader'
@@ -36,7 +36,8 @@ export function ProjectFormScreen({ id }: { id?: string }) {
   if (existing.data && !existing.data.actions.edit) {
     return <Blocked title="You cannot edit this project" onBack={back}
       body={existing.data.status === 'completed' ? 'Completed projects are read only. An Admin can reopen it if it needs changes.'
-        : 'Only its Sales Person, an Admin or a Sales Admin can edit it.'} />
+        : existing.data.status === 'draft' ? 'Only its Sales Person, an Admin or a Sales Admin can edit a draft.'
+          : 'Once a project is created, only an Admin can change it.'} />
   }
   return <ProjectForm key={id ?? 'new'} project={existing.data ?? null} />
 }
@@ -74,10 +75,7 @@ export function ProjectForm({ project }: { project: Project | null }) {
   const [savedId, setSavedId] = useState<string | null>(project?.id ?? null)
   const [values, setValues] = useState<ProjectFormValues>(project ? fromProject(project) : { ...EMPTY })
   const [saved, setSaved] = useState<ProjectFormValues>(values)
-  // Cementitious value typed but not yet added with Add: kept here so it survives
-  // switching steps, counts as unsaved, and is added (or flagged) on save.
-  const [cemText, setCemText] = useState('')
-  const dirty = JSON.stringify(values) !== JSON.stringify(saved) || cemText.trim() !== ''
+  const dirty = JSON.stringify(values) !== JSON.stringify(saved)
   const [errors, setErrors] = useState<FormErrors>({})
   const [banner, setBanner] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
@@ -155,44 +153,36 @@ export function ProjectForm({ project }: { project: Project | null }) {
     else top()
   }
 
-  /** The values to save, with a typed but not added cementitious value added; null (and the error shown) when it is not valid. */
-  const takePending = (): ProjectFormValues | null => {
-    const r = withPendingCementitious(values, cemText)
-    if (r.error) { fail({ ...validate(values), cementitious_contents: r.error }); return null }
-    if (r.values !== values) { setValues(r.values); setCemText('') }
-    return r.values
-  }
-
   const onSaveDraft = () => {
     setBanner(null)
-    const v = takePending()
-    if (!v) return
+    const v = values
     const e = validate(v)
     if (Object.keys(e).length) fail(e)
     else saveDraft.mutate(v)
   }
   const onContinue = () => {
     setBanner(null)
-    const e = validate(values, STEP1_FIELDS)
-    for (const f of missingStep1(values, picksSalesPerson)) e[f] ??= `${LABELS[f]} is required.`
+    // Formats, required fields, then the legacy wizard rules (3 characters, contact name, potential above 0).
+    const e = { ...ruleProblems(values, STEP1_FIELDS), ...validate(values, STEP1_FIELDS) }
+    for (const f of missingStep1(values, picksSalesPerson)) e[f] = `${LABELS[f]} is required.`
     if (Object.keys(e).length) { setErrors(e); top() }
     else goTo(2)
   }
   const onCreate = () => {
     setBanner(null)
-    const v = takePending()
-    if (!v) return
-    const e = validate(v)
+    const v = values
+    const e = { ...ruleProblems(v), ...validate(v) }
     if (priceMissing(v)) e.selling_basic_price ??= PRICE_MESSAGE
     if (Object.keys(e).length) fail(e)
     else create.mutate(v)
   }
   const onSaveChanges = () => {
     setBanner(null)
-    const v = takePending()
-    if (!v) return
-    // Like the server: formats always; past draft, what submit required must stay filled in.
-    const e = { ...(isDraft ? {} : requiredAfterDraft(v, picksSalesPerson)), ...validate(v) }
+    const v = values
+    // Like the server: formats always; past draft, what submit required must stay filled in,
+    // and the legacy rules apply to the values being changed.
+    const e = isDraft ? validate(v)
+      : { ...requiredAfterDraft(v, picksSalesPerson), ...ruleProblems(v, changedFields(v, saved)), ...validate(v) }
     if (Object.keys(e).length) fail(e)
     else saveChanges.mutate(v)
   }
@@ -242,7 +232,7 @@ export function ProjectForm({ project }: { project: Project | null }) {
 
         {step === 1
           ? <CustomerStep v={values} e={errors} set={set} project={project} picksSalesPerson={picksSalesPerson} ownName={project?.sales_person?.name ?? user?.full_name ?? ''} />
-          : <TechnicalStep v={values} e={errors} set={set} project={project} cemText={cemText} setCemText={setCemText} />}
+          : <TechnicalStep v={values} e={errors} set={set} project={project} />}
 
         {step === 1 && isDraft ? (
           <Small>Save draft keeps what you have entered, even with fields missing. The project becomes Created, and Sales Admins are notified, only when step 2 is complete and every field passes.</Small>
@@ -357,7 +347,7 @@ function CustomerStep(p: StepProps & { picksSalesPerson: boolean; ownName: strin
   )
 }
 
-function TechnicalStep({ cemText, setCemText, ...p }: StepProps & { cemText: string; setCemText: (t: string) => void }) {
+function TechnicalStep(p: StepProps) {
   const { v, e, set, project } = p
   const slumps = useLookups('slump_flow')
   const retention = useLookups('retention_time')
@@ -375,8 +365,8 @@ function TechnicalStep({ cemText, setCemText, ...p }: StepProps & { cemText: str
         <LookupChips {...p} name="grades_of_concrete" label="Grade of concrete" />
         <LookupChips {...p} name="wc_ratios_ssd" label="W/C ratio, SSD" />
         <LookupPicker {...p} name="wc_ratio_corrected" label="W/C ratio, corrected" />
-        <CementitiousInput value={v.cementitious_contents} onChange={(x) => set('cementitious_contents', x)} error={e.cementitious_contents}
-          text={cemText} onText={setCemText} />
+        <CementitiousChips value={v.cementitious_contents} onChange={(x) => set('cementitious_contents', x)} error={e.cementitious_contents}
+          current={project?.cementitious_contents ?? []} />
       </Section>
       <Section title="Workability and strength">
         <Field label="Requirement type" error={e.requirement_type}>
@@ -422,40 +412,20 @@ function TechnicalStep({ cemText, setCemText, ...p }: StepProps & { cemText: str
   )
 }
 
-export function CementitiousInput({ value, onChange, error, text: shared, onText }: {
-  value: number[]; onChange: (v: number[]) => void; error?: string; text?: string; onText?: (t: string) => void
+/** Cementitious content, kg/m³: picked from the master list, as in the legacy app. */
+export function CementitiousChips({ value, onChange, error, current }: {
+  value: number[]; onChange: (v: number[]) => void; error?: string; current: number[]
 }) {
-  const [own, setOwn] = useState('')
-  const text = shared ?? own
-  const setText = onText ?? setOwn
-  const [local, setLocal] = useState<string | null>(null)
-  const add = () => {
-    const problem = cementitiousProblem(text, value)
-    if (problem) { setLocal(problem); return }
-    onChange([...value, Number(text.trim())].sort((a, b) => a - b))
-    setText('')
-    setLocal(null)
-  }
-  const message = local ?? error
+  const q = useLookups('cementitious_content')
+  const full = value.length >= CEMENTITIOUS_MAX
+  const options = cementitiousOptions(q.data, [...current, ...value])
+  const label = 'Cementitious content, kg/m³'
   return (
-    <Field label="Cementitious content, kg/m³" error={message} hint="Add each total binder the customer runs">
-      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-        {value.map((n) => (
-          <Pressable key={n} accessibilityRole="button" accessibilityLabel={`Remove ${n} kg per cubic metre`}
-            onPress={() => { setLocal(null); onChange(value.filter((x) => x !== n)) }}
-            style={{ flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: 40, paddingLeft: 14, paddingRight: 10, borderRadius: 20, backgroundColor: color.ink }}>
-            <Text style={{ color: '#fff', fontFamily: font.semibold, fontSize: 15 }}>{n}</Text>
-            <Text style={{ color: '#fff', fontSize: 18 }}>×</Text>
-          </Pressable>
-        ))}
-      </View>
-      <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
-        <View style={{ flex: 1 }}>
-          <TextField accessibilityLabel="Cementitious content to add, kg per cubic metre" placeholder="e.g. 440" keyboardType="number-pad"
-            invalid={Boolean(message)} value={text} onChangeText={(t) => { setText(t); setLocal(null) }} onSubmitEditing={add} returnKeyType="done" />
-        </View>
-        <Button title="Add" onPress={add} style={{ flexGrow: 0 }} />
-      </View>
+    <Field label={label} error={error}
+      hint={q.isError ? 'This list could not be loaded. Go back and open the form again.' : full ? `Up to ${CEMENTITIOUS_MAX} values.` : 'Select each total binder the customer runs'}>
+      {q.isLoading ? <Small>Loading…</Small>
+        : <Chips label={label} options={options} value={value}
+          onChange={(x) => { if (x.length <= CEMENTITIOUS_MAX) onChange([...x].sort((a, b) => a - b)) }} />}
     </Field>
   )
 }

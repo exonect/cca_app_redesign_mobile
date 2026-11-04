@@ -23,7 +23,7 @@ export type ProjectActions = {
 export type ProjectListItem = {
   id: string; status: ProjectStatus; status_label: string; project_name: string; customer_name: string
   sfdc_no: string; region: Ref | null; city: Ref | null; sales_person: Person | null; ct: Person | null
-  trial_count: number; potential_cr: string | null; updated_at: string
+  trial_count: number; potential_cr: string | null; created_at: string; updated_at: string
 }
 
 export type Project = ProjectListItem & {
@@ -41,7 +41,13 @@ export type ProjectEvent = {
   note: string; data: Record<string, unknown>; created_at: string
 }
 
-export type Pipeline = { stages: { status: ProjectStatus; label: string; count: number }[]; projects: number; potential_cr: string | number }
+/** Dashboard trial figures (legacy statistics tiles): `trials` non draft, `total` closed with a conclusion (the % base). */
+export type TrialSummary = { trials: number; total: number; met: number; below: number; open: number; met_percent: number; below_percent: number }
+export type Pipeline = {
+  stages: { status: ProjectStatus; label: string; count: number }[]; projects: number; potential_cr: string | number
+  /** Trials on the same projects (absent on servers before the parity release). */
+  trial_summary?: TrialSummary
+}
 
 export type TrialStatus = 'draft' | 'in_progress' | 'closed'
 export type Outcome = '' | 'met' | 'below'
@@ -99,5 +105,10 @@ export type Notification = {
 export type SearchGroup = {
   product: string; family: string; recipe: number | null; trials: number; met: number; best_28d: string | null
   typical_dosage: string | null
-  matches: { id: number; source: 'trial' | 'legacy'; trial: string | null; label: string; date: string | null; project: string; customer: string; free_wc: string | null; cementitious: string | null; dosage: string | null; strength_28d: string | null }[]
+  matches: {
+    id: number; source: 'trial' | 'legacy'; trial: string | null; label: string; date: string | null; project: string; customer: string
+    free_wc: string | null; cementitious: string | null; dosage: string | null; strength_28d: string | null
+    /** True when the trial is outside the projects you can see: project, customer and trial are left out. */
+    restricted?: boolean
+  }[]
 }

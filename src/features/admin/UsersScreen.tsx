@@ -144,9 +144,10 @@ export function UsersScreen() {
 /** Mirrors the server: email up to 254 and unique ignoring case (server), employee ID up to 20 and unique (server), names up to 150. */
 export const userSchema = z.object({
   email: z.string().trim().toLowerCase().max(254, 'Use 254 characters or fewer.').email('Enter a full email address, for example name@thermaxglobal.com.'),
-  emp_id: z.string().trim().min(1, 'Enter the employee ID.').max(20, 'Use 20 characters or fewer.'),
-  first_name: z.string().trim().min(1, 'Enter the first name.').max(150, 'Use 150 characters or fewer.'),
-  last_name: z.string().trim().max(150, 'Use 150 characters or fewer.'),
+  // Legacy user form: first name, last name and employee ID required, at least 3 characters each.
+  emp_id: z.string().trim().min(1, 'Enter the employee ID.').min(3, 'The employee ID needs at least 3 characters.').max(20, 'Use 20 characters or fewer.'),
+  first_name: z.string().trim().min(1, 'Enter the first name.').min(3, 'The first name needs at least 3 characters.').max(150, 'Use 150 characters or fewer.'),
+  last_name: z.string().trim().min(1, 'Enter the last name.').min(3, 'The last name needs at least 3 characters.').max(150, 'Use 150 characters or fewer.'),
   role: z.enum(['SP', 'CT', 'SAD', 'AD']),
   region: z.string(),
   manager: z.string(),
@@ -234,7 +235,7 @@ function UserSheet({ user, onClose, onDone }: { user: User | 'new' | null; onClo
       <Field label="First name" required error={errors.first_name}>
         <TextField accessibilityLabel="First name" invalid={Boolean(errors.first_name)} maxLength={150} value={v.first_name} onChangeText={(t) => set('first_name', t)} />
       </Field>
-      <Field label="Last name" error={errors.last_name}>
+      <Field label="Last name" required error={errors.last_name}>
         <TextField accessibilityLabel="Last name" maxLength={150} invalid={Boolean(errors.last_name)} value={v.last_name} onChangeText={(t) => set('last_name', t)} />
       </Field>
       <Field label="Employee ID" required error={errors.emp_id}>

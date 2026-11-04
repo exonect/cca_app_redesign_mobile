@@ -15,7 +15,8 @@ jest.mock('expo-router', () => ({
   usePreventRemove: () => jest.fn(),
 }))
 jest.mock('react-native-safe-area-context', () => require('react-native-safe-area-context/jest/mock').default)
-jest.mock('@/auth/AuthProvider', () => ({ useAuth: () => ({ user: { id: 1, full_name: 'Ravi CT', emp_id: 'E2' }, hasRole: (...r: string[]) => r.includes('CT') }) }))
+let mockRole = 'AD'  // only an Admin edits recipes (legacy)
+jest.mock('@/auth/AuthProvider', () => ({ useAuth: () => ({ user: { id: 1, full_name: 'Ravi CT', emp_id: 'E2' }, hasRole: (...r: string[]) => r.includes(mockRole) }) }))
 
 const recipe: RecipeWithLock = {
   id: 9, family: 'neutrol', family_label: 'Neutrol', product_name: 'Neutrol 585', version: 3, label: 'Neutrol 585 V3', formulation_name: 'N-585',
@@ -27,6 +28,7 @@ const recipe: RecipeWithLock = {
 const client = () => new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { retry: false, gcTime: Infinity } } })
 
 beforeEach(() => {
+  mockRole = 'AD'
   mockApi.mockReset()
   mockApi.mockImplementation(async (path: string, opts?: { method?: string; body?: unknown }) => {
     if (path === '/recipes/9/' && !opts?.method) return recipe
@@ -62,4 +64,12 @@ it('opens the form prefilled and saves a new version through POST with the confi
   const body = mockApi.mock.calls.find(([p, o]) => p === '/recipes/' && o?.method === 'POST')![1].body
   expect(body).toMatchObject({ product_name: 'Neutrol 585', family: 'neutrol', location: 3, confirm_new_version: true, components: { R101: '42' } })
   await waitFor(() => expect(mockReplace).toHaveBeenCalledWith('/recipes/10'))
+})
+
+it('shows a CT the recipe read only (legacy: CTs had View only)', async () => {
+  mockRole = 'CT'
+  await render(<QueryClientProvider client={client()}><RecipeScreen id="9" /></QueryClientProvider>)
+  expect(await screen.findByText('Only an Admin can change recipes or their status.')).toBeTruthy()
+  expect(screen.queryByRole('button', { name: 'Create new version' })).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Put on hold' })).toBeNull()
 })

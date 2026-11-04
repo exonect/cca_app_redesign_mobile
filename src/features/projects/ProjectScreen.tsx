@@ -11,6 +11,7 @@ import { draftListItems, listItemView } from '@/offline/overlay'
 import { createTrial } from '@/offline/trialActions'
 import { NotOnPhone, SyncChip } from '@/offline/ui'
 import { FlagBanner } from '@/features/flags/FlagBanner'
+import { TrialsExcelButton } from '@/features/trials/TrialsExcelButton'
 import type { Project, ProjectStatus, Ref, TrialListItem } from '@/shared/types'
 import type { ProjectWithFlags } from '@/shared/typesExt'
 import { Body, Button, Card, EmptyState, ErrorState, H1, H2, Loading, OutcomeChip, PROJECT_STATUS_LABEL, ProjectStatusChip, Small, Strong, TrialStatusChip } from '@/ui/kit'
@@ -119,7 +120,8 @@ export function ProjectDetail({ project: p }: { project: Project }) {
   if (a.edit) acts.push({ key: 'edit', title: editLabel, onPress: goEdit })
   if (a.request_support) acts.push({ key: 'support', title: 'Request support', onPress: () => setSheet('support') })
   if (a.reopen) acts.push({ key: 'reopen', title: 'Reopen', onPress: () => setSheet('reopen') })
-  if (a.delete) acts.push({ key: 'delete', title: 'Delete draft', onPress: () => setSheet('delete'), danger: true })
+  const isDraft = p.status === 'draft'
+  if (a.delete) acts.push({ key: 'delete', title: isDraft ? 'Delete draft' : 'Delete project', onPress: () => setSheet('delete'), danger: true })
   const main = acts.find((x) => x.key === primary)
   const rest = acts.filter((x) => x !== main)
   // Footer: the primary plus one more inline; the rest under "More actions".
@@ -183,11 +185,11 @@ export function ProjectDetail({ project: p }: { project: Project }) {
         intro="Admins and Sales Admins are notified and assign a CT to run the trials." noteLabel="Note for the managers"
         confirmLabel="Request support" busy={requestSupport.isPending} error={requestSupport.error} onConfirm={(n) => requestSupport.mutate(n)} />
       <NoteSheet open={sheet === 'reopen'} onClose={() => { reopen.reset(); close() }} title="Reopen this project?"
-        intro="The project goes back to Trials closed so it can be edited and more trials can be run." noteLabel="Reason for reopening"
+        intro="The project goes back to the stage it was completed from, so more trials can be run and an Admin can edit it." noteLabel="Reason for reopening"
         confirmLabel="Reopen" busy={reopen.isPending} error={reopen.error} onConfirm={(n) => reopen.mutate(n)} />
-      <ConfirmSheet open={sheet === 'delete'} onClose={() => { remove.reset(); close() }} title="Delete this draft project?"
-        body={`The draft ${p.project_name || 'Untitled project'}${p.customer_name ? ` for ${p.customer_name}` : ''} and everything entered on it will be removed. This cannot be undone.`}
-        cancelLabel="Keep draft" confirmLabel="Delete draft" danger busy={remove.isPending} error={remove.error} onConfirm={() => remove.mutate()} />
+      <ConfirmSheet open={sheet === 'delete'} onClose={() => { remove.reset(); close() }} title={isDraft ? 'Delete this draft project?' : 'Delete this project?'}
+        body={`${isDraft ? 'The draft' : 'The project'} ${p.project_name || 'Untitled project'}${p.customer_name ? ` for ${p.customer_name}` : ''} and everything entered on it, including any draft trials, will be removed. This cannot be undone.`}
+        cancelLabel={isDraft ? 'Keep draft' : 'Keep project'} confirmLabel={isDraft ? 'Delete draft' : 'Delete project'} danger busy={remove.isPending} error={remove.error} onConfirm={() => remove.mutate()} />
     </View>
   )
 }
@@ -245,6 +247,7 @@ function TrialsSection({ p, q, onStart, starting }: {
   return (
     <View style={{ gap: 8 }}>
       <H2>Trials</H2>
+      {p.trial_count > 0 ? <TrialsExcelButton project={p.id} /> : null}
       {q.isLoading ? <Loading label="Loading trials" /> : null}
       {q.isPending && q.fetchStatus === 'paused' && !online && trials.length === 0 ? <Small>The trial list is not saved on this phone yet.</Small> : null}
       {q.isError ? <ErrorState error={q.error} onRetry={() => q.refetch()} /> : null}

@@ -29,9 +29,11 @@ export function RecipeScreen({ id }: { id: string }) {
   // edit: change this recipe; version: a new version prefilled from it (a locked recipe cannot be changed).
   const [mode, setMode] = useState<'view' | 'edit' | 'version'>(isNew ? 'edit' : 'view')
   const q = useQuery({ queryKey: ['recipe', id], queryFn: () => api<RecipeWithLock>(`/recipes/${id}/`), enabled: !isNew })
-  const canEdit = hasRole('AD', 'SAD', 'CT')
+  // Legacy rights: Admins, Sales Admins (from a trial) and CTs add recipes; only an Admin edits or changes status.
+  const canCreate = hasRole('AD', 'SAD', 'CT')
+  const canEdit = hasRole('AD')
 
-  if (isNew && !canEdit) return <Shell title="Recipe"><Body>Only Admins, Sales Admins and CTs can add recipes.</Body></Shell>
+  if (isNew && !canCreate) return <Shell title="Recipe"><Body>Only Admins, Sales Admins and CTs can add recipes.</Body></Shell>
   if (!isNew && !q.data) {
     return <Shell title="Recipe">{q.isError ? <ErrorState error={q.error} onRetry={() => q.refetch()} /> : <Loading label="Loading recipe" />}</Shell>
   }
@@ -98,9 +100,10 @@ export function RecipeDetail({ recipe: r, canEdit, onEdit, onNewVersion }: { rec
     </>
   ) : <Button title="Edit recipe" variant="primary" onPress={onEdit} />
   return (
-    <Shell title={`${r.product_name} V${r.version}`} right={<RecipeStatusChip status={r.status} />}
+    <Shell title={r.product_name ? `${r.product_name} V${r.version}` : r.label} right={<RecipeStatusChip status={r.status} />}
       sub={<Small style={{ fontSize: 14 }}>{[r.formulation_name || 'No formulation name yet', r.location_name].filter(Boolean).join(', ')}</Small>}
       footer={footer}>
+      {!canEdit ? <Banner tone="info">Only an Admin can change recipes or their status.</Banner> : null}
       {r.locked ? <Banner tone="info">{`${lockedNote(r.trial_count)} Changes go into a new version; the trials keep this one.`}</Banner> : null}
       {status.isError ? <ErrorState error={status.error} /> : null}
       <FlagBanner flags={r.flags} refresh={[['recipe', String(r.id)], ['recipes']]} what="recipe" />
@@ -124,22 +127,26 @@ export function RecipeDetail({ recipe: r, canEdit, onEdit, onNewVersion }: { rec
 
 // --- Edit -----------------------------------------------------------------------
 
-/** Mirrors the server: product name up to 100 (spaces collapsed), customer and project up to 256. */
-export const recipeSchema = z.object({
-  family: z.enum(['neutrol', 'tecnos', 'plastard', 'other'], { message: 'Choose the product family.' }),
+const SFDC_MESSAGE = 'Enter all 6 digits of the SFDC number, including leading zeros.'
+/** Mirrors the server (legacy rules): family chosen (starts blank), product name optional up to 100
+ * (spaces collapsed), SFDC 6 digits and required on a new recipe, customer and project up to 256. */
+export const recipeSchemaFor = (isNew: boolean) => z.object({
+  family: z.string().refine((f) => ['neutrol', 'tecnos', 'plastard', 'other'].includes(f), 'Choose the product family.'),
   product_name: z.string().transform((v) => v.split(/\s+/).filter(Boolean).join(' '))
-    .pipe(z.string().min(1, 'Enter the product name.').max(100, 'Use 100 characters or fewer.')),
-  sfdc_no: z.string().trim().regex(/^(\d{6})?$/, 'Enter all 6 digits of the SFDC number, including leading zeros.'),
+    .pipe(z.string().max(100, 'Use 100 characters or fewer.')),
+  sfdc_no: isNew
+    ? z.string().trim().min(1, 'Enter the 6 digit SFDC number.').regex(/^\d{6}$/, SFDC_MESSAGE)
+    : z.string().trim().regex(/^(\d{6})?$/, SFDC_MESSAGE),
   location: z.string().min(1, 'Choose the formulation location.'),
   customer_name: z.string().trim().max(256, 'Use 256 characters or fewer.'),
   project_name: z.string().trim().max(256, 'Use 256 characters or fewer.'),
   status: z.enum(['active', 'on_hold']),
 })
-const schema = recipeSchema
-type Form = z.input<typeof schema>
+export const recipeSchema = recipeSchemaFor(false)
+type Form = z.input<typeof recipeSchema>
 type FormKey = keyof Form
 type Body = Omit<Form, 'location'> & { location: number; components: Record<string, string>; confirm_new_version?: boolean }
-const BLANK: Form = { family: 'neutrol', product_name: '', sfdc_no: '', location: '', customer_name: '', project_name: '', status: 'active' }
+const BLANK: Form = { family: '', product_name: '', sfdc_no: '', location: '', customer_name: '', project_name: '', status: 'active' }
 
 /** recipe: edit it. recipe null: a new recipe, or with template a new version
  * prefilled from that recipe (same product name and composition, saved
@@ -147,11 +154,13 @@ const BLANK: Form = { family: 'neutrol', product_name: '', sfdc_no: '', location
 export function RecipeForm({ recipe, template, onDone }: { recipe: Recipe | null; template?: Recipe; onDone: () => void }) {
   const isNew = recipe === null
   const source = recipe ?? template ?? null
+  // SFDC number and family are part of the formulation name: fixed once it exists (legacy edit form).
+  const named = Boolean(recipe?.formulation_name)
   const { user, hasRole } = useAuth()
   const qc = useQueryClient()
   const cities = useLookups('city')
   const [initial] = useState<Form>(() => source ? {
-    family: source.family, product_name: source.product_name, sfdc_no: source.sfdc_no, location: String(source.location),
+    family: source.family === 'other' && !recipe ? '' : source.family, product_name: source.product_name, sfdc_no: source.sfdc_no, location: String(source.location),
     customer_name: source.customer_name, project_name: source.project_name, status: source.status,
   } : BLANK)
   const [v, setV] = useState<Form>(initial)
@@ -185,7 +194,8 @@ export function RecipeForm({ recipe, template, onDone }: { recipe: Recipe | null
       void qc.invalidateQueries({ queryKey: ['recipes'] })
       qc.setQueryData(['recipe', String(saved.id)], saved)
       setLeaving(true)
-      if (isNew) { allowLeave(); router.replace(`/recipes/${saved.id}`) } else onDone()
+      // A changed set of raw materials saves a new formulation: open it (the edited recipe is unchanged).
+      if (isNew || saved.id !== recipe.id) { allowLeave(); router.replace(`/recipes/${saved.id}`) } else onDone()
     },
     onError: (e, body) => {
       if (e instanceof ApiError && e.status === 409 && e.code === 'locked' && recipe) {
@@ -220,7 +230,7 @@ export function RecipeForm({ recipe, template, onDone }: { recipe: Recipe | null
     setTried(true)
     setFormError(undefined)
     setCompError(undefined)
-    const r = schema.safeParse(v)
+    const r = recipeSchemaFor(isNew).safeParse(v)
     const e: Partial<Record<FormKey, string>> = {}
     if (!r.success) for (const i of r.error.issues) { const k = String(i.path[0]) as FormKey; e[k] ??= i.message }
     setErrors(e)
@@ -230,7 +240,8 @@ export function RecipeForm({ recipe, template, onDone }: { recipe: Recipe | null
     setCompError(comp)
     if (!r.success || comp) return
     // A new version was asked for explicitly, so it is confirmed up front.
-    save.mutate({ ...r.data, location: Number(r.data.location), components: compositionOf(rows), ...(template ? { confirm_new_version: true } : {}) })
+    const fixed = named ? { sfdc_no: recipe!.sfdc_no, family: recipe!.family } : {}
+    save.mutate({ ...r.data, ...fixed, location: Number(r.data.location), components: compositionOf(rows), ...(template ? { confirm_new_version: true } : {}) })
   }
 
   const errorCount = Object.values(errors).filter(Boolean).length + (compError ? 1 : 0)
@@ -251,21 +262,28 @@ export function RecipeForm({ recipe, template, onDone }: { recipe: Recipe | null
       {formError ? <Banner tone="error">{formError}</Banner> : null}
 
       <Card title="Recipe details" style={{ gap: 14 }}>
-        <Field label="Product family" required error={errors.family}>
-          <Chips label="Product family" single options={FAMILY_OPTIONS} value={[v.family]} onChange={(x) => x[0] && set('family', x[0])} />
-        </Field>
-        <Field label="Product name" required error={errors.product_name} hint="For example Neutrol 585">
+        {named ? (
+          <Field label="Product family" hint="Part of the formulation name">
+            <TextField accessibilityLabel="Product family, fixed" editable={false} value={recipe!.family_label} />
+          </Field>
+        ) : (
+          <Field label="Product family" required error={errors.family}>
+            <Chips label="Product family" single options={FAMILY_OPTIONS} value={[v.family]} onChange={(x) => x[0] && set('family', x[0])} />
+          </Field>
+        )}
+        <Field label="Product name" error={errors.product_name} hint="For example Neutrol 585. Optional: without one the recipe is listed by its formulation name.">
           <TextField accessibilityLabel="Product name" invalid={Boolean(errors.product_name)} maxLength={100} value={v.product_name} onChangeText={(t) => set('product_name', t)} />
         </Field>
         <View style={{ flexDirection: 'row', gap: 12 }}>
           <View style={{ flex: 1 }}>
             <Field label="Version">
-              <TextField accessibilityLabel="Version, set automatically" editable={false} value={recipe ? `V${recipe.version}` : template ? 'Next version' : 'New'} />
+              <TextField accessibilityLabel="Version, set automatically" editable={false} value={recipe ? (recipe.product_name ? `V${recipe.version}` : 'None') : template ? 'Next version' : 'New'} />
             </Field>
           </View>
           <View style={{ flex: 1.4 }}>
-            <Field label="SFDC number" error={errors.sfdc_no} hint="6 digits">
-              <TextField accessibilityLabel="SFDC number" keyboardType="number-pad" maxLength={6} invalid={Boolean(errors.sfdc_no)} value={v.sfdc_no} onChangeText={(t) => set('sfdc_no', t)} />
+            <Field label="SFDC number" required={isNew} error={errors.sfdc_no} hint={named ? 'Part of the formulation name' : '6 digits'}>
+              <TextField accessibilityLabel="SFDC number" keyboardType="number-pad" maxLength={6} invalid={Boolean(errors.sfdc_no)} editable={!named}
+                value={v.sfdc_no} onChangeText={(t) => set('sfdc_no', t)} />
             </Field>
           </View>
         </View>

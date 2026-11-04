@@ -23,10 +23,13 @@ const GROUPS: { title: string; keys: string[] }[] = [
   { title: 'Location', keys: ['region', 'city'] },
   { title: 'Cement', keys: ['cement_brand', 'cement_grade'] },
   { title: 'Concrete', keys: ['grade_of_concrete', 'wc_ratio_ssd', 'wc_ratio_corrected', 'cementitious_content', 'requirement_type', 'retention_time', 'slump_flow', 'strength_age', 'compressive_strength'] },
-  { title: 'Materials', keys: ['mineral_admixture', 'sand_type', 'sand_zone', 'fine_aggregate_source', 'coarse_aggregate_source'] },
+  // Mineral admixture source (legacy "Mineral Admixture Source") sits with the mineral admixtures.
+  { title: 'Materials', keys: ['mineral_admixture', 'mineral_admixture_source', 'sand_type', 'sand_zone', 'fine_aggregate_source', 'coarse_aggregate_source'] },
   { title: 'Trial', keys: ['bleeding', 'setting'] },
-  { title: 'Admixture', keys: ['admixture_brand', 'admixture_base', 'admixture_source', 'rm_code'] },
+  { title: 'Admixture', keys: ['admixture_brand', 'admixture_base', 'rm_code'] },
 ]
+/** Lists the legacy app never had: shown only when they hold values. */
+const HIDDEN_WHEN_EMPTY = new Set(['admixture_source'])
 const NUMERIC = new Set(['wc_ratio_ssd', 'wc_ratio_corrected', 'cementitious_content', 'retention_time', 'slump_flow', 'compressive_strength'])
 
 export function MasterDataScreen() {
@@ -41,7 +44,7 @@ export function MasterDataScreen() {
     const q = find.trim().toLowerCase()
     const match = (c: Category) => !q || c.label.toLowerCase().includes(q)
     const out = GROUPS.map((g) => ({ title: g.title, items: g.keys.map((k) => all.find((c) => c.category === k)).filter((c): c is Category => !!c && match(c)) }))
-    const other = all.filter((c) => !known.has(c.category) && match(c))
+    const other = all.filter((c) => !known.has(c.category) && match(c) && !(HIDDEN_WHEN_EMPTY.has(c.category) && !c.active && !c.inactive))
     if (other.length) out.push({ title: 'Other', items: other })
     return out.filter((g) => g.items.length)
   }, [cats.data, find])
@@ -96,18 +99,37 @@ export function MasterDataScreen() {
   )
 }
 
-export const VALUE_MAX = 200
+/** Legacy maximum lengths: 100 unless listed. */
+export const VALUE_MAX = 100
+const MAX_LENGTH: Record<string, number> = { fine_aggregate_source: 1000, coarse_aggregate_source: 1000, bleeding: 256, setting: 256 }
+export const maxLengthFor = (category: string) => MAX_LENGTH[category] ?? VALUE_MAX
+/** The six legacy regions (fixed list on the server). */
+export const REGIONS = ['East', 'West', 'South', 'North', 'Central', 'North-East']
+const SENTENCE = new Set(['city', 'cement_brand', 'cement_grade', 'grade_of_concrete', 'wc_ratio_ssd', 'wc_ratio_corrected',
+  'requirement_type', 'retention_time', 'slump_flow', 'compressive_strength', 'fine_aggregate_source', 'coarse_aggregate_source',
+  'bleeding', 'setting', 'admixture_brand', 'admixture_base', 'admixture_source', 'mineral_admixture_source', 'rm_code'])
+const UPPER = new Set(['mineral_admixture', 'sand_type', 'sand_zone'])
+/** Legacy case rules, applied by the server on save. */
+export function caseNote(category: string): string | undefined {
+  if (SENTENCE.has(category)) return 'Saved in Sentence case, like "Opc 53".'
+  if (UPPER.has(category)) return 'Saved in UPPER CASE.'
+  return undefined
+}
 /** Numeric lists take plain numbers only: up to 6 digits, optionally a point and 1 to 4 decimals (server NUMERIC_VALUE). */
 export const NUMERIC_VALUE = /^\d{1,6}(\.\d{1,4})?$/
 export const NUMERIC_MESSAGE = 'This list only accepts numbers of 0 or more, like 160 or 0.38 (up to 6 digits before the point and 4 after).'
 
-/** Mirrors the server: spaces trimmed and collapsed, not blank, up to 200
- * characters, and numbers only for the numeric lists. */
-export function lookupValueProblem(raw: string, numeric: boolean): string | null {
+/** Mirrors the server: spaces trimmed and collapsed, not blank, the legacy length
+ * per list, numbers only for the numeric lists (whole numbers for cementitious
+ * content), and the six legacy regions. */
+export function lookupValueProblem(raw: string, numeric: boolean, category = ''): string | null {
   const v = raw.split(/\s+/).filter(Boolean).join(' ')
   if (!v) return 'Enter a value.'
-  if (v.length > VALUE_MAX) return `Use ${VALUE_MAX} characters or fewer.`
+  const max = maxLengthFor(category)
+  if (v.length > max) return `Use ${max} characters or fewer.`
+  if (category === 'cementitious_content' && !/^\d{1,6}$/.test(v)) return 'Cementitious content is a whole number in kg/m³, like 420.'
   if (numeric && !NUMERIC_VALUE.test(v)) return NUMERIC_MESSAGE
+  if (category === 'region' && !REGIONS.some((r) => r.toLowerCase() === v.toLowerCase())) return `Regions are fixed: ${REGIONS.slice(0, -1).join(', ')} or ${REGIONS[REGIONS.length - 1]}.`
   return null
 }
 
@@ -167,7 +189,7 @@ function ValuesScreen({ category, onBack }: { category: Category; onBack: () => 
             {toggle.isError ? <ErrorState error={toggle.error} /> : null}
             {adding ? (
               <View style={{ backgroundColor: color.surface, borderWidth: 1, borderColor: color.ink, borderRadius: radius.card, padding: 14 }}>
-                <ValueEditor label={`New ${noun}`} numeric={numeric} isCity={isCity} submitLabel="Add value"
+                <ValueEditor category={key} label={`New ${noun}`} numeric={numeric} isCity={isCity} submitLabel="Add value"
                   onCancel={() => setAdding(false)}
                   onSave={(body) => api<Value>('/lookups/', { method: 'POST', body: { category: key, ...body } })}
                   onSaved={(v) => { void refresh(); setAdding(false); setNotice(`${v.value} added`) }} />
@@ -198,7 +220,7 @@ function ValuesScreen({ category, onBack }: { category: Category; onBack: () => 
       />
       <Sheet open={edit !== null} onClose={() => setEdit(null)} title={edit ? `Edit ${edit.value}` : 'Edit value'}>
         {edit ? (
-          <ValueEditor key={edit.id} label="Value" numeric={numeric} isCity={isCity} initial={edit} submitLabel="Save"
+          <ValueEditor key={edit.id} category={key} label="Value" numeric={numeric} isCity={isCity} initial={edit} submitLabel="Save"
             onCancel={() => setEdit(null)}
             onSave={(body) => api<Value>(`/lookups/${edit.id}/`, { method: 'PATCH', body })}
             onSaved={(saved) => { void refresh(); setEdit(null); setNotice(`${saved.value} saved`) }} />
@@ -217,8 +239,8 @@ function AdminHeaderBack({ title, sub, onBack, children }: { title: string; sub?
   )
 }
 
-function ValueEditor({ label, numeric, isCity, initial, submitLabel, onSave, onSaved, onCancel }: {
-  label: string; numeric: boolean; isCity: boolean; initial?: Value; submitLabel: string
+function ValueEditor({ category, label, numeric, isCity, initial, submitLabel, onSave, onSaved, onCancel }: {
+  category: string; label: string; numeric: boolean; isCity: boolean; initial?: Value; submitLabel: string
   onSave: (body: { value: string; parent?: number | null }) => Promise<Value>; onSaved: (v: Value) => void; onCancel: () => void
 }) {
   const regions = useLookups('region')
@@ -237,7 +259,7 @@ function ValueEditor({ label, numeric, isCity, initial, submitLabel, onSave, onS
   })
   const submit = () => {
     setErrors({})
-    const problem = lookupValueProblem(value, numeric)
+    const problem = lookupValueProblem(value, numeric, category)
     if (problem) { setErrors({ value: problem }); return }
     if (isCity && !parent) { setErrors({ parent: 'Choose the region this city belongs to.' }); return }
     save.mutate()
@@ -245,9 +267,14 @@ function ValueEditor({ label, numeric, isCity, initial, submitLabel, onSave, onS
   const other = errors._ ?? errors.non_field_errors
   return (
     <View style={{ gap: 12 }}>
-      <Field label={label} error={errors.value ?? errors.category}>
-        <TextField accessibilityLabel={label} autoFocus value={value} keyboardType={numeric ? 'decimal-pad' : 'default'} maxLength={VALUE_MAX}
-          invalid={Boolean(errors.value ?? errors.category)} onChangeText={setValue} onSubmitEditing={submit} returnKeyType="done" />
+      <Field label={label} error={errors.value ?? errors.category} hint={caseNote(category)}>
+        {category === 'region' ? (
+          <Picker label={label} value={value || null} invalid={Boolean(errors.value)} placeholder="Choose region"
+            options={REGIONS.map((r) => ({ value: r, label: r }))} onChange={(x) => setValue(x ?? '')} />
+        ) : (
+          <TextField accessibilityLabel={label} autoFocus value={value} keyboardType={numeric ? 'decimal-pad' : 'default'} maxLength={maxLengthFor(category)}
+            invalid={Boolean(errors.value ?? errors.category)} onChangeText={setValue} onSubmitEditing={submit} returnKeyType="done" />
+        )}
       </Field>
       {isCity ? (
         <Field label="Region" error={errors.parent}>

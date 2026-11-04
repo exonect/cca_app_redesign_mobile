@@ -1,7 +1,8 @@
 import Constants from 'expo-constants'
 import { router, type Href } from 'expo-router'
+import * as WebBrowser from 'expo-web-browser'
 import { useState } from 'react'
-import { Platform, Pressable, ScrollView, Text, View } from 'react-native'
+import { Alert, Platform, Pressable, ScrollView, Text, View } from 'react-native'
 
 import { useAuth } from '@/auth/AuthProvider'
 import { useSyncCounts } from '@/offline/outbox'
@@ -11,12 +12,28 @@ import { color, font, radius } from '@/ui/theme'
 import { ConfirmSheet } from '@/features/projects/Sheet'
 import { Avatar, TabHeader } from '@/features/projects/TabHeader'
 
+import { powerBiUrl } from './powerBi'
+
 const ROLE_NAME = { AD: 'Admin', SAD: 'Sales Admin', SP: 'Sales Person', CT: 'CT (Technical)' } as const
 
 export function appVersion() {
   const cfg = Constants.expoConfig
   const id = Platform.OS === 'ios' ? cfg?.ios?.bundleIdentifier : cfg?.android?.package
   return `CCA ${cfg?.version ?? ''}${id ? ` (${id})` : ''}`.trim()
+}
+
+/** Legacy Power BI screen (Admins): the CCA Power BI report, in the in app browser. */
+export async function openPowerBi() {
+  const url = powerBiUrl()
+  if (!url) {
+    Alert.alert('Power BI is not set up', 'Ask your CCA admin to add the Power BI report address to the app.')
+    return
+  }
+  try {
+    await WebBrowser.openBrowserAsync(url)
+  } catch {
+    Alert.alert('Power BI did not open', 'Check your mobile data or Wi-Fi and try again.')
+  }
 }
 
 export function MoreScreen() {
@@ -31,7 +48,8 @@ export function MoreScreen() {
     { title: 'Trials', meta: 'All trials you can see', href: '/trial' },
     { title: 'Product search', meta: 'Past trials by product', href: '/search' },
   ]
-  if (hasRole('AD', 'SAD', 'CT')) work.push({ title: 'Recipe master', meta: hasRole('CT') ? 'Your recipes' : 'All locations', href: '/recipes' })
+  // Legacy menus: Recipe master for Admins and CTs.
+  if (hasRole('AD', 'CT')) work.push({ title: 'Recipe master', meta: hasRole('CT') ? 'Your recipes' : 'All locations', href: '/recipes' })
 
   return (
     <View style={{ flex: 1, backgroundColor: color.concrete }}>
@@ -64,10 +82,11 @@ export function MoreScreen() {
             <List label="Admin" rows={[
               { title: 'Users', meta: 'Add, edit, deactivate', onPress: () => router.push('/admin/users') },
               { title: 'Master data', meta: 'Dropdown values', onPress: () => router.push('/admin/master-data') },
+              { title: 'Power BI', meta: 'CCA report', onPress: () => { void openPowerBi() } },
             ]} />
           ) : (
             <View style={{ backgroundColor: color.head, borderWidth: 1, borderColor: color.line, borderRadius: radius.card, padding: 14 }}>
-              <Body style={{ color: color.subtle }}>Users and Master data show here only for Admin. Ask your CCA Admin if a dropdown value is missing.</Body>
+              <Body style={{ color: color.subtle }}>Users, Master data and Power BI show here only for Admin. Ask your CCA Admin if a dropdown value is missing.</Body>
             </View>
           )}
         </View>

@@ -43,13 +43,15 @@ function wrap(ui: ReactNode) {
 }
 afterEach(() => { clients.splice(0).forEach((c) => c.clear()) })
 
-const lookups: Record<string, { id: number; value: string }[]> = { region: [{ id: 1, value: 'West' }] }
+const lookups: Record<string, { id: number; value: string }[]> = {
+  region: [{ id: 1, value: 'West' }], cementitious_content: [{ id: 5, value: '420' }, { id: 6, value: '450' }],
+}
 
 const project = (over: Partial<Project> = {}): Project => ({
   id: 'p1', status: 'draft', status_label: 'Draft', project_name: 'Baner commercial podium', customer_name: 'Mula Concrete LLP', sfdc_no: '490233',
   region: { id: 1, value: 'West' }, city: { id: 2, value: 'Pune' }, sales_person: { id: 1, name: 'Rahul Patil' }, ct: null, trial_count: 0,
   potential_cr: '0.90', updated_at: '2026-11-03T10:00:00Z', contact_person_name: 'Prakash Kale', contact_email: 'p@x.in', contact_phone: '9822014763',
-  selling_basic_price: null, bulk_and_barrel: null, remarks: '', cement_brands: [], cement_grades: [], mineral_admixtures: [], grades_of_concrete: [],
+  selling_basic_price: null, bulk_and_barrel: null, remarks: 'Pumped to level 12', cement_brands: [], cement_grades: [], mineral_admixtures: [], grades_of_concrete: [],
   wc_ratios_ssd: [], compressive_strengths: [], wc_ratio_corrected: null, cementitious_contents: [], requirement_type: '', retention_time: null,
   slump_flow: null, strength_age: null, sand_type: null, fine_aggregate_source: null, coarse_aggregate_source: null, sand_zone: null, admixture_base: null,
   created_at: '2026-11-01T10:00:00Z', created_by: null,
@@ -142,32 +144,33 @@ describe('project form errors and leaving', () => {
 })
 
 describe('project form, final server rules', () => {
-  it('adds a typed but not added cementitious value when saving a draft', async () => {
-    const p = project()
+  it('picks cementitious content from the master list and saves it with the draft', async () => {
+    const p = project({ cementitious_contents: [380] })
     const base = mockApi.getMockImplementation()!
     mockApi.mockImplementation(async (path: string, opts?: Parameters<typeof api>[1]) => {
-      if (path === '/projects/p1/' && opts?.method === 'PATCH') return { ...p, cementitious_contents: [420] } as never
+      if (path === '/projects/p1/' && opts?.method === 'PATCH') return { ...p, cementitious_contents: [380, 450] } as never
       return base(path, opts)
     })
     await render(wrap(<ProjectForm project={p} />))
     await fireEvent.press(screen.getByRole('button', { name: 'Continue' }))
-    await fireEvent.changeText(await screen.findByLabelText('Cementitious content to add, kg per cubic metre'), '420')
-    expect(mockPreventRemove.mock.calls.at(-1)?.[0]).toBe(true)
+    expect(await screen.findByText('380 (not in the list)')).toBeTruthy()
+    await fireEvent.press(screen.getByRole('checkbox', { name: '450' }))
     await fireEvent.press(screen.getByRole('button', { name: 'Save draft' }))
     await waitFor(() => expect(mockApi).toHaveBeenCalledWith('/projects/p1/', expect.objectContaining({
-      method: 'PATCH', body: expect.objectContaining({ cementitious_contents: [420] }),
+      method: 'PATCH', body: expect.objectContaining({ cementitious_contents: [380, 450] }),
     })))
-    expect(await screen.findByText('Draft saved')).toBeTruthy()
+    expect(screen.queryByLabelText('Cementitious content to add, kg per cubic metre')).toBeNull()
   })
 
-  it('does not save a typed cementitious value that cannot be added', async () => {
-    const p = project({ cementitious_contents: [420] })
+  it('applies the legacy rules on Continue: 3 characters, contact name letters, potential above 0, remarks', async () => {
+    const p = project({ customer_name: 'AB', contact_person_name: 'Prakash 2', potential_cr: '0', remarks: '' })
     await render(wrap(<ProjectForm project={p} />))
     await fireEvent.press(screen.getByRole('button', { name: 'Continue' }))
-    await fireEvent.changeText(await screen.findByLabelText('Cementitious content to add, kg per cubic metre'), '42')
-    await fireEvent.press(screen.getByRole('button', { name: 'Save draft' }))
-    expect(await screen.findByText('Enter a whole number from 100 to 999 kg/m³. Fix or clear the value you typed, then save again.')).toBeTruthy()
-    expect(mockApi).not.toHaveBeenCalledWith('/projects/p1/', expect.anything())
+    expect(await screen.findByText('Use at least 3 characters.')).toBeTruthy()
+    expect(screen.getByText('Use letters, spaces, dots, apostrophes and hyphens only.')).toBeTruthy()
+    expect(screen.getByText('Project potential must be more than 0.')).toBeTruthy()
+    expect(screen.getByText('Remarks is required.')).toBeTruthy()
+    expect(screen.queryByText('Technical requirements')).toBeNull()
   })
 
   it('past draft, will not save a required field left blank', async () => {
@@ -181,6 +184,15 @@ describe('project form, final server rules', () => {
 })
 
 describe('project screen', () => {
+  it('lets an Admin delete a created project and warns about an open trial on completion', async () => {
+    const p = project({ status: 'trial_in_progress', status_label: 'Trial in progress', trial_count: 1,
+      actions: { ...project().actions, edit: false, submit: false, delete: true, complete: true } })
+    await render(wrap(<ProjectDetail project={p} />))
+    expect(await screen.findByRole('button', { name: 'Delete project' })).toBeTruthy()
+    await fireEvent.press(screen.getByRole('button', { name: 'Mark completed' }))
+    expect(await screen.findByText(/A trial is still open/)).toBeTruthy()
+  })
+
   it('starts a trial and opens it', async () => {
     const p = project({ status: 'assigned_to_ct', status_label: 'Assigned to CT', actions: { ...project().actions, start_trial: true, delete: false, submit: false } })
     const base = mockApi.getMockImplementation()!

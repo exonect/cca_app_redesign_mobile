@@ -3,9 +3,9 @@ import type { Recipe } from '@/shared/types'
 
 export type Row = { code: string; pct: string }
 
+/** The families users choose, as in the legacy app ("Other" is only on imported legacy recipes). */
 export const FAMILY_OPTIONS: { value: Recipe['family']; label: string }[] = [
-  { value: 'neutrol', label: 'Neutrol' }, { value: 'tecnos', label: 'Tecnos' },
-  { value: 'plastard', label: 'Plastard' }, { value: 'other', label: 'Other' },
+  { value: 'neutrol', label: 'Neutrol' }, { value: 'tecnos', label: 'Tecnos' }, { value: 'plastard', label: 'Plastard' },
 ]
 export const STATUS_OPTIONS: { value: Recipe['status']; label: string }[] = [
   { value: 'active', label: 'Active' }, { value: 'on_hold', label: 'On hold' },

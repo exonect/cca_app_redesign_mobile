@@ -28,13 +28,16 @@ export function SearchScreen() {
   const [picking, setPicking] = useState(false)
   const [editing, setEditing] = useState(false)
   const [allChips, setAllChips] = useState(false)
+  // Legacy: a search with no criteria listed every product.
+  const [listAll, setListAll] = useState(false)
 
   const request = useMemo(() => toRequest(criteria), [criteria])
   const n = countCriteria(request)
+  const ran = n > 0 || listAll
   const search = useQuery({
     queryKey: ['search', request],
     queryFn: () => api<SearchResponse>('/search/', { method: 'POST', body: request }),
-    enabled: n > 0,
+    enabled: ran,
   })
   const prefill = useMutation({
     mutationFn: (p: ProjectListItem) => api<Record<string, unknown>>('/search/criteria/', { query: { project: p.id } }),
@@ -57,7 +60,10 @@ export function SearchScreen() {
         {prefill.isPending ? <Loading label="Filling criteria" /> : null}
         {prefill.isError ? <ErrorState error={prefill.error} /> : null}
         {chips.length === 0 && !prefill.isPending ? (
-          <Small>Pick a project to fill the criteria from its requirement, or set them yourself with Edit criteria.</Small>
+          <View style={{ gap: 8 }}>
+            <Small>Pick a project to fill the criteria from its requirement, or set them yourself with Edit criteria.</Small>
+            {!listAll ? <Button title="List every product" variant="secondary" onPress={() => setListAll(true)} /> : null}
+          </View>
         ) : (
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
             {shown.map((c) => (
@@ -75,7 +81,7 @@ export function SearchScreen() {
           </View>
         )}
       </View>
-      {n > 0 && search.data ? (
+      {ran && search.data ? (
         <View accessibilityLiveRegion="polite">
           <Text style={{ fontFamily: font.regular, fontSize: 15, color: color.subtle }}>
             {search.data.products === 0 ? <Text style={{ fontFamily: font.bold, color: color.ink }}>No products found</Text> : (
@@ -84,7 +90,7 @@ export function SearchScreen() {
                 {` from ${plural(search.data.trials, 'matching trial')}`}
               </>
             )}
-            {`, ${plural(n, 'criterion', 'criteria')} applied`}
+            {n === 0 ? ', no criteria, every product listed' : `, ${plural(n, 'criterion', 'criteria')} applied`}
           </Text>
         </View>
       ) : null}
@@ -105,15 +111,15 @@ export function SearchScreen() {
       </TabHeader>
 
       <FlatList
-        data={n > 0 && search.isSuccess ? groups : []}
+        data={ran && search.isSuccess ? groups : []}
         keyExtractor={(g) => g.product}
         contentContainerStyle={{ padding: 16, gap: 12, paddingBottom: 32 }}
         refreshing={refreshing}
-        onRefresh={n > 0 ? onRefresh : undefined}
+        onRefresh={ran ? onRefresh : undefined}
         ListHeaderComponent={header}
         renderItem={({ item, index }) => <ProductGroup g={item} expanded={index === 0} />}
         ListEmptyComponent={
-          n === 0 ? undefined
+          !ran ? undefined
             : search.isPending ? <Loading label="Searching past trials" />
               : search.isError ? <ErrorState error={search.error} onRetry={() => search.refetch()} />
                 : (
@@ -122,14 +128,14 @@ export function SearchScreen() {
                     action={<Button title="Edit criteria" onPress={() => setEditing(true)} />} />
                 )
         }
-        ListFooterComponent={n > 0 && groups.length ? (
+        ListFooterComponent={ran && groups.length ? (
           <Small>Search covers closed trials that met expectation and imported history. A trial matches when every criterion you set falls inside its tolerance.</Small>
         ) : undefined}
       />
 
       <ProjectPickerSheet open={picking} onClose={() => setPicking(false)} onPick={(p) => { setPicking(false); prefill.mutate(p) }} />
       <CriteriaSheet open={editing} initial={criteria} onClose={() => setEditing(false)}
-        onApply={(c) => { setCriteria(c); setEditing(false); setAllChips(false) }} />
+        onApply={(c) => { setCriteria(c); setEditing(false); setAllChips(false); setListAll(false) }} />
     </View>
   )
 }
@@ -158,15 +164,16 @@ function ProductGroup({ g, expanded }: { g: SearchGroup; expanded: boolean }) {
         <View style={{ borderTopWidth: 1, borderColor: color.divider }}>
           {rows.map((m) => {
             const detail = [m.dosage ? `at ${num(m.dosage)}%` : null, m.date ? `cast ${shortDate(m.date)}` : null, m.free_wc ? `W/C ${num(m.free_wc)}` : null].filter(Boolean).join(', ')
-            const tappable = m.source === 'trial' && Boolean(m.trial)
+            const tappable = !m.restricted && m.source === 'trial' && Boolean(m.trial)
+            const title = m.restricted ? 'Trial outside your projects' : m.project || m.label || 'Past trial'
             return (
               <Pressable key={m.id} disabled={!tappable} accessibilityRole={tappable ? 'link' : undefined}
-                accessibilityLabel={`${m.project || m.label}. ${detail}. 28 day ${m.strength_28d ? num(m.strength_28d) : 'not tested'}${tappable ? '' : '. Imported history'}`}
+                accessibilityLabel={`${title}. ${detail}. 28 day ${m.strength_28d ? num(m.strength_28d) : 'not tested'}${tappable || m.restricted ? '' : '. Imported history'}`}
                 onPress={() => tappable && router.push(`/trial/${m.trial}`)}
                 style={{ flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: 56, paddingHorizontal: 16, paddingVertical: 10, borderBottomWidth: 1, borderColor: color.divider }}>
                 <View style={{ flex: 1, gap: 1 }}>
-                  <Text numberOfLines={1} style={{ fontFamily: font.semibold, fontSize: 15, color: tappable ? color.link : color.ink }}>{m.project || m.label || 'Past trial'}</Text>
-                  <Small numberOfLines={1}>{[m.label, detail].filter(Boolean).join(', ')}{tappable ? '' : ', imported'}</Small>
+                  <Text numberOfLines={1} style={{ fontFamily: font.semibold, fontSize: 15, color: tappable ? color.link : color.ink }}>{title}</Text>
+                  <Small numberOfLines={1}>{[m.label, detail].filter(Boolean).join(', ')}{tappable || m.restricted ? '' : ', imported'}</Small>
                 </View>
                 <Text style={{ fontFamily: font.bold, fontSize: 15, color: color.ink }}>{num(m.strength_28d)}</Text>
               </Pressable>

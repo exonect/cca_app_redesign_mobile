@@ -7,7 +7,8 @@
     "base": {
       "env": {
         "EXPO_PUBLIC_AUTH_SCHEME": "com.thermex.app",
-        "EXPO_PUBLIC_DEV_LOGIN": "false"
+        "EXPO_PUBLIC_DEV_LOGIN": "false",
+        "EXPO_PUBLIC_POWERBI_URL": "https://app.powerbi.com/view?r=eyJrIjoiMDQzMDk2NDQtMGQ5MC00NTYzLTg2YTktNDk0ODI3ZWU3YzY0IiwidCI6IjM2MjI5ZmVjLTYwN2UtNDRhMC04N2M4LWNkMWZlOWRmODJiYiIsImMiOjEwfQ%3D%3D"
       }
     },
     "uat": {
