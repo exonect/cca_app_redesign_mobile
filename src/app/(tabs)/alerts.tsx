@@ -1,5 +1,5 @@
-import { Header, Screen, Body } from '@/ui/kit'
+import { AlertsScreen } from '@/features/alerts/AlertsScreen'
 
 export default function Alerts() {
-  return <Screen header={<Header title="Alerts" />}><Body>Being built.</Body></Screen>
+  return <AlertsScreen />
 }

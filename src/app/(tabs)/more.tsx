@@ -1,5 +1,5 @@
-import { Header, Screen, Body } from '@/ui/kit'
+import { MoreScreen } from '@/features/more/MoreScreen'
 
 export default function More() {
-  return <Screen header={<Header title="More" />}><Body>Being built.</Body></Screen>
+  return <MoreScreen />
 }

@@ -1,5 +1,5 @@
-import { Header, Screen, Body } from '@/ui/kit'
+import { SearchScreen } from '@/features/search/SearchScreen'
 
 export default function Search() {
-  return <Screen header={<Header title="Product search" />}><Body>Being built.</Body></Screen>
+  return <SearchScreen />
 }

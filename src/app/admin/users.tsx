@@ -1,5 +1,6 @@
-import { Header, Screen, Body } from '@/ui/kit'
+import { AdminOnly } from '@/features/admin/AdminGate'
+import { UsersScreen } from '@/features/admin/UsersScreen'
 
-export default function UsersScreen() {
-  return <Screen header={<Header title="Users" />}><Body>Being built.</Body></Screen>
+export default function UsersRoute() {
+  return <AdminOnly title="Users"><UsersScreen /></AdminOnly>
 }

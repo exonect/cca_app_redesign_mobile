@@ -1,5 +1,6 @@
-import { Header, Screen, Body } from '@/ui/kit'
+import { AdminOnly } from '@/features/admin/AdminGate'
+import { MasterDataScreen } from '@/features/admin/MasterDataScreen'
 
-export default function MasterDataScreen() {
-  return <Screen header={<Header title="Master data" />}><Body>Being built.</Body></Screen>
+export default function MasterDataRoute() {
+  return <AdminOnly title="Master data"><MasterDataScreen /></AdminOnly>
 }
