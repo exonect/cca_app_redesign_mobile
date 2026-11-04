@@ -8,7 +8,7 @@ import type { Person, Project, Ref } from '@/shared/types'
 import { Banner, Button, EmptyState, ErrorState, Field, Loading, Small, Strong, TextField } from '@/ui/kit'
 import { color, font, radius } from '@/ui/theme'
 
-import { storeProject } from './api'
+import { refreshAfterRefusal, storeProject } from './api'
 import { plural } from './format'
 import { Sheet } from './Sheet'
 import { Avatar } from './TabHeader'
@@ -33,6 +33,7 @@ function Body_({ project, open, onClose, onDone }: { project: AssignTarget | nul
   const assign = useMutation({
     mutationFn: () => api<Project>(`/projects/${project!.id}/assign-ct/`, { body: { ct: chosen, note } }),
     onSuccess: (p) => { storeProject(qc, p); void qc.invalidateQueries({ queryKey: ['users', 'technical'] }); onDone?.('CT assigned'); onClose() },
+    onError: (e) => { if (project) refreshAfterRefusal(qc, project.id, e) },
   })
 
   type Ct = { id: number; full_name: string; email: string; region_name: string | null; open_trials: number; active_projects?: number }

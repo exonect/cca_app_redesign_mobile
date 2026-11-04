@@ -13,7 +13,7 @@ import { color, font, TOUCH } from '@/ui/theme'
 
 import { CastAtField } from './CastAtField'
 import { num } from './format'
-import { mixForm, mixPayload, mixProblems, type MaterialEntry, type MixForm } from './forms'
+import { badNonNegative, isNumberText, mixForm, mixPayload, mixProblems, type MaterialEntry, type MixForm } from './forms'
 import { CellInput, cell, Output, Section, SourceNote, StepActions, TableHead, TickIcon, WarnIcon } from './parts'
 import { useStepForm, useWorkspace } from './workspace'
 
@@ -42,10 +42,11 @@ function serverLines(t: Trial): Record<string, MixLine> | null {
 
 const signed = (v: number | null) => (v === null ? '–' : v < 0 ? `−${f2(-v)}` : `+${f2(v)}`)
 const COLS: (number | 'flex')[] = ['flex', 92, 76, 22]
+const SHOWN = ['cast_at', 'grade_of_concrete', 'admixture_1', 'dosage_1', 'batch_size', 'admixture_2', 'dosage_2', 'materials'] as const
 
 export function MixStep({ readOnly, banners }: { readOnly: boolean; banners: ReactNode }) {
   const { trial, project, header, castError, setCastError } = useWorkspace()
-  const { form, setForm, errors, dirty } = useStepForm<MixForm>('mix', mixForm, mixPayload, mixProblems)
+  const { form, setForm, errors, dirty } = useStepForm<MixForm>('mix', mixForm, mixPayload, mixProblems, SHOWN)
   const [open, setOpen] = useState<string | null>(null)
   const [second, setSecond] = useState(() => !!trial.admixture_2)
   const products = useProducts()
@@ -103,12 +104,12 @@ export function MixStep({ readOnly, banners }: { readOnly: boolean; banners: Rea
       <Section>
         <CastAtField date={form.cast_date} time={form.cast_time} readOnly={readOnly} error={castErr}
           onChange={(d, t) => { setForm((f) => ({ ...f, cast_date: d, cast_time: t })); setCastError(null) }} />
-        <Field label="Grade of concrete" error={err('grade_of_concrete')}>
+        <Field label="Grade of concrete" error={err('grade_of_concrete')} hint={grades.isError ? 'This list could not be loaded. Go back and open the trial again.' : undefined}>
           <Picker label="Grade of concrete" placeholder="Choose grade" value={form.grade_of_concrete ? Number(form.grade_of_concrete) : null}
             options={gradeOptions} disabled={readOnly} invalid={!!err('grade_of_concrete')}
             onChange={(v) => set('grade_of_concrete', v === null ? '' : String(v))} />
         </Field>
-        <Field label="Product" error={err('admixture_1')} hint="Active recipes only">
+        <Field label="Product" error={err('admixture_1')} hint={products.isError ? 'The product list could not be loaded. Go back and open the trial again.' : 'Active recipes only'}>
           <Picker label="Product" placeholder="Choose product" value={form.admixture_1 ? Number(form.admixture_1) : null}
             options={productOptions(form.admixture_1, trial.admixture_1)} disabled={readOnly} invalid={!!err('admixture_1')}
             onChange={(v) => set('admixture_1', v === null ? '' : String(v))} />
@@ -202,17 +203,17 @@ export function MixStep({ readOnly, banners }: { readOnly: boolean; banners: Rea
                     <View style={{ flexDirection: 'row', gap: 8 }}>
                       <Labeled label="SSD design, kg">
                         <CellInput accessibilityLabel={`${MATERIAL_LABEL[m]} SSD design, kilograms per cubic metre`} value={entry.ssd} editable={!readOnly}
-                          onChangeText={(v) => setMat(m, 'ssd', v)} />
+                          invalid={badNonNegative(entry.ssd)} onChangeText={(v) => setMat(m, 'ssd', v)} />
                       </Labeled>
                       {agg && (
                         <>
                           <Labeled label="Absorption, %">
                             <CellInput accessibilityLabel={`${MATERIAL_LABEL[m]} absorption, percent`} value={entry.absorption} editable={!readOnly}
-                              onChangeText={(v) => setMat(m, 'absorption', v)} />
+                              invalid={!isNumberText(entry.absorption)} onChangeText={(v) => setMat(m, 'absorption', v)} />
                           </Labeled>
                           <Labeled label="Moisture, %">
                             <CellInput accessibilityLabel={`${MATERIAL_LABEL[m]} moisture, percent`} value={entry.moisture} editable={!readOnly}
-                              onChangeText={(v) => setMat(m, 'moisture', v)} />
+                              invalid={!isNumberText(entry.moisture)} onChangeText={(v) => setMat(m, 'moisture', v)} />
                           </Labeled>
                         </>
                       )}
@@ -256,8 +257,15 @@ export function MixStep({ readOnly, banners }: { readOnly: boolean; banners: Rea
         <View style={{ paddingTop: 4 }}><SourceNote fromServer={fromServer} /></View>
       </Section>
       {err('materials') ? <Banner tone="error">{err('materials')}</Banner> : null}
+      {!dirty && mixWarnings(trial).length ? <Banner tone="warn">{mixWarnings(trial).join(' ')}</Banner> : null}
     </Screen>
   )
+}
+
+/** Calculation warnings the server stored for the mix (negative SSD, batch size of 0). */
+export function mixWarnings(t: Trial) {
+  return (t.results?.errors ?? []).filter((e) => /^(SSD design|Batch size)/.test(e))
+    .map((e) => e.replace(/ for (\w+) /, (_, m: string) => ` for ${(MATERIAL_LABEL[m] ?? m).toLowerCase()} `))
 }
 
 const num16 = { fontFamily: font.medium, fontSize: 15, color: color.ink, textAlign: 'right', fontVariant: ['tabular-nums'] } as const

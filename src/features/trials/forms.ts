@@ -4,7 +4,7 @@
  * Inputs hold strings exactly as typed; the server parses and checks them.
  * Same rules as the web app (src/features/trials/forms.ts there).
  */
-import { AGES, AGGREGATES, MATERIALS, SIEVE_SETS } from '@/shared/calc'
+import { AGES, AGGREGATES, MATERIAL_LABEL, MATERIALS, SIEVE_LABEL, SIEVE_SETS } from '@/shared/calc'
 import type { Project, Trial } from '@/shared/types'
 
 import { castIso, castParts } from './castAt'
@@ -41,6 +41,40 @@ const blank = (v: string | undefined) => v === undefined || v.trim() === ''
 export const orNull = (v: string | undefined) => (blank(v) ? null : v!.trim())
 const idOrNull = (v: string) => (blank(v) ? null : Number(v))
 
+// --- Number checks ------------------------------------------------------------------
+/**
+ * Lab inputs are typed as text. Blank means "not measured" and is always
+ * fine. Anything else must be a plain number: the server either rejects
+ * text it cannot read or (for some JSON fields) silently drops it, so the
+ * phone stops it before saving.
+ */
+const NUMBER = /^-?(\d+(\.\d*)?|\.\d+)$/
+export const isNumberText = (v: string | undefined) => blank(v) || NUMBER.test(v!.trim())
+export const isNegative = (v: string | undefined) => !blank(v) && NUMBER.test(v!.trim()) && Number(v!.trim()) < 0
+/** Not a number, or below zero: what a "0 or more" field must not hold. */
+export const badNonNegative = (v: string | undefined) => !isNumberText(v) || isNegative(v)
+
+/** Range and decimal places of a server DecimalField, as a message or null. */
+export function decimalProblem(v: string, rule: { label: string; min?: number; minExclusive?: number; max?: number; decimals: number; maxDigits?: number }): string | null {
+  if (blank(v)) return null
+  const t = v.trim()
+  if (!NUMBER.test(t)) return `Enter ${rule.label} as a number.`
+  const x = Number(t)
+  const frac = t.includes('.') ? t.split('.')[1].length : 0
+  const range = rule.minExclusive !== undefined
+    ? `more than ${rule.minExclusive}${rule.max !== undefined ? ` and up to ${rule.max}` : ''}`
+    : `from ${rule.min ?? 0}${rule.max !== undefined ? ` to ${rule.max}` : ' up'}`
+  if ((rule.minExclusive !== undefined && x <= rule.minExclusive) || (rule.min !== undefined && x < rule.min) || (rule.max !== undefined && x > rule.max)) {
+    return `Enter ${rule.label} ${range}.`
+  }
+  if (frac > rule.decimals) return `Enter ${rule.label} with up to ${rule.decimals} decimal ${rule.decimals === 1 ? 'place' : 'places'}.`
+  if (rule.maxDigits !== undefined) {
+    const whole = String(Math.trunc(Math.abs(x))).replace(/^0$/, '')
+    if (whole.length > rule.maxDigits - rule.decimals) return `Enter ${rule.label} with at most ${rule.maxDigits - rule.decimals} digits before the decimal point.`
+  }
+  return null
+}
+
 // --- Step 1 ------------------------------------------------------------------------
 export type SieveEntry = { sieve: string; retained: string }
 export type SieveForm = { sieves: Record<SieveMaterial, SieveEntry[]>; proportions: Record<SieveMaterial, string> }
@@ -70,6 +104,23 @@ export function sievePayload(f: SieveForm) {
   }
 }
 
+/** Client checks that block saving step 1. Retained weights: the server
+ * rejects text and negatives. Proportions: text is blocked; negatives and a
+ * total other than 100 are accepted by the server and shown as warnings. */
+export function sieveProblems(f: SieveForm): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const m of SIEVE_MATERIALS) {
+    const bad = f.sieves[m].find((r) => badNonNegative(r.retained))
+    if (bad) {
+      out.sieves = `Enter retained weights as numbers of 0 or more. Check ${SIEVE_MATERIAL_LABEL[m]} on ${SIEVE_LABEL[bad.sieve] ?? bad.sieve}.`
+      break
+    }
+  }
+  const p = SIEVE_MATERIALS.find((m) => !isNumberText(f.proportions[m]))
+  if (p) out.proportions = `Enter the ${SIEVE_MATERIAL_LABEL[p]} proportion as a number.`
+  return out
+}
+
 // --- Step 2 ------------------------------------------------------------------------
 export type MaterialEntry = { ssd: string; absorption: string; moisture: string; source: string; cement_type: string }
 export type MixForm = {
@@ -93,10 +144,28 @@ export function mixForm(t: Trial): MixForm {
   }
 }
 
-/** Client checks that block a save (the server checks everything else). */
+/** Client checks that block a save. Dosage and batch size mirror the server
+ * fields (dosage 0 to 10, 2 decimals; batch size above 0, 3 decimals, 6
+ * digits); material quantities must be numbers (the server would drop text). */
 export function mixProblems(f: MixForm): Record<string, string> {
+  const out: Record<string, string> = {}
   const { error } = castIso(f.cast_date, f.cast_time)
-  return error ? { cast_at: error } : {}
+  if (error) out.cast_at = error
+  for (const [k, label] of [['dosage_1', 'the dosage'], ['dosage_2', 'the second dosage']] as const) {
+    const msg = decimalProblem(f[k], { label, min: 0, max: 10, decimals: 2, maxDigits: 5 })
+    if (msg) out[k] = msg
+  }
+  const batch = decimalProblem(f.batch_size, { label: 'the batch size', minExclusive: 0, decimals: 3, maxDigits: 6 })
+  if (batch) out.batch_size = batch
+  for (const m of MATERIALS) {
+    const x = f.materials[m]
+    const key = (['ssd', 'absorption', 'moisture'] as const).find((k) => !isNumberText(x?.[k]))
+    if (key) {
+      out.materials = `Enter ${MATERIAL_LABEL[m] ?? m} ${key === 'ssd' ? 'SSD design' : key} as a number.`
+      break
+    }
+  }
+  return out
 }
 
 export function mixPayload(f: MixForm) {
@@ -139,6 +208,16 @@ export function freshForm(t: Trial, project?: Project): FreshForm {
 
 const filled = (o: Record<string, string>) => Object.fromEntries(Object.entries(o).filter(([, v]) => !blank(v)).map(([k, v]) => [k, v.trim()]))
 
+/** Readings must be numbers of 0 or more (server rule); density 1000 to 3000 kg/m³, 1 decimal. */
+export function freshProblems(f: FreshForm): Record<string, string> {
+  const out: Record<string, string> = {}
+  const bad = READING_MINUTES.find((m) => badNonNegative(f.readings[m]))
+  if (bad) out.fresh_readings = `Enter readings in mm as numbers of 0 or more. Check ${bad === '0' ? 'the initial reading' : `${bad} min`}.`
+  const density = decimalProblem(f.fresh_density, { label: 'the density', min: 1000, max: 3000, decimals: 1, maxDigits: 6 })
+  if (density) out.fresh_density = density
+  return out
+}
+
 export function freshPayload(f: FreshForm) {
   return {
     fresh_test: f.fresh_test, fresh_readings: filled(f.readings), fresh_density: orNull(f.fresh_density),
@@ -155,6 +234,12 @@ export function cubeRows(t: Trial, age: string): CubeEntry[] {
   const rows = saved.map((c) => ({ weight: str(c.weight), load: str(c.load) }))
   while (rows.length < CUBES_PER_AGE) rows.push({ weight: '', load: '' })
   return rows
+}
+
+/** Weights and loads must be numbers of 0 or more (the server rejects negatives and drops text). */
+export function cubeProblem(rows: CubeEntry[]): string | null {
+  const i = rows.findIndex((r) => badNonNegative(r.weight) || badNonNegative(r.load))
+  return i < 0 ? null : `Enter weights and loads as numbers of 0 or more. Check cube ${i + 1}.`
 }
 
 export const cubePayload = (rows: CubeEntry[]) => ({ cubes: rows.map((r) => ({ weight: orNull(r.weight), load: orNull(r.load) })) })
@@ -193,6 +278,18 @@ export function conclusionForm(t: Trial, project?: Project): ConclusionForm {
   }
 }
 export const conclusionPayload = (f: ConclusionForm) => ({ ...f })
+
+/** Signatory names are at most 150 characters (server column); signatures at most 400,000 characters of PNG data. */
+export const SIGNATORY_MAX = 150
+export const SIGNATURE_MAX_CHARS = 400_000
+export function conclusionProblems(f: ConclusionForm): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const s of SIGNATORIES) {
+    if (f[s.name].trim().length > SIGNATORY_MAX) out[s.name] = `Use ${SIGNATORY_MAX} characters or fewer.`
+    if (f[s.sign].length > SIGNATURE_MAX_CHARS) out[s.sign] = 'This signature image is too large. Clear it and sign again.'
+  }
+  return out
+}
 
 /** The server joins its close warnings with spaces; split them back into sentences. */
 export function splitWarnings(message: string) {

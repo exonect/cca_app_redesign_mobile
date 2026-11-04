@@ -1,17 +1,18 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { router } from 'expo-router'
+import { router, usePreventRemove } from 'expo-router'
 import { useRef, useState, type ReactNode } from 'react'
-import { Pressable, ScrollView, Text, View, type ScrollViewInstance } from 'react-native'
+import { Alert, Pressable, ScrollView, Text, View, type ScrollViewInstance } from 'react-native'
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import { api, fieldErrors } from '@/api/client'
+import { errorMessage, statusOf } from '@/api/errors'
 import { useLookups } from '@/api/hooks'
 import { useAuth } from '@/auth/AuthProvider'
 import type { Project, Ref } from '@/shared/types'
 import { Banner, Body, Button, Card, Chips, ErrorState, Field, H1, Loading, NumberField, Picker, Small, Strong, TextField } from '@/ui/kit'
 import { color, font, radius, TOUCH } from '@/ui/theme'
 
-import { storeProject, useProject, useSalesPersons } from './api'
+import { invalidateProject, storeProject, useProject, useSalesPersons } from './api'
 import { num } from './format'
 import {
   CATEGORY, EMPTY, fromProject, isFormField, LABELS, missingStep1, PRICE_MESSAGE, priceMissing, stepForErrors, STEP1_FIELDS,
@@ -71,6 +72,8 @@ export function ProjectForm({ project }: { project: Project | null }) {
   const [step, setStep] = useState<Step>(1)
   const [savedId, setSavedId] = useState<string | null>(project?.id ?? null)
   const [values, setValues] = useState<ProjectFormValues>(project ? fromProject(project) : { ...EMPTY })
+  const [saved, setSaved] = useState<ProjectFormValues>(values)
+  const dirty = JSON.stringify(values) !== JSON.stringify(saved)
   const [errors, setErrors] = useState<FormErrors>({})
   const [banner, setBanner] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
@@ -89,12 +92,25 @@ export function ProjectForm({ project }: { project: Project | null }) {
     const fields = fieldErrors(e)
     const known = Object.keys(fields).filter(isFormField)
     setErrors(Object.fromEntries(known.map((f) => [f, fields[f]])))
+    // Errors on fields this form has no input for still need saying.
     const other = Object.entries(fields).filter(([k]) => !isFormField(k)).map(([, v]) => v)
-    setBanner(known.length ? null : other[0] ?? (e instanceof Error ? e.message : 'Saving failed. Try again.'))
+    setBanner(other[0] ?? (known.length ? null : errorMessage(e, 'Saving failed. Try again.')))
+    // The project changed under us (completed, deleted, no longer ours): reload it.
+    const status = statusOf(e)
+    if (savedId && (status === 409 || status === 404 || status === 403)) invalidateProject(qc, savedId)
     const s = stepForErrors(known)
     if (s) goTo(s)
     else top()
   }
+
+  // Leaving with unsaved entries (back link, hardware back, swipe) asks first.
+  const allowLeave = usePreventRemove(dirty, ({ repeat }) => {
+    Alert.alert('Leave without saving?', 'This project has changes that are not saved yet.', [
+      { text: 'Stay', style: 'cancel' },
+      { text: 'Leave without saving', style: 'destructive', onPress: repeat },
+    ])
+  })
+  const leaveTo = (id: string) => { allowLeave(); router.replace(`/project/${id}`) }
 
   const save = async (): Promise<Project> => {
     const body = toPayload(values, picksSalesPerson)
@@ -108,20 +124,22 @@ export function ProjectForm({ project }: { project: Project | null }) {
 
   const saveDraft = useMutation({
     mutationFn: save,
-    onSuccess: (p) => { setNotice('Draft saved'); setValues(fromProject(p)) },
+    onSuccess: (p) => { setNotice('Draft saved'); const v = fromProject(p); setValues(v); setSaved(v) },
     onError: showServerErrors,
   })
   const create = useMutation({
     mutationFn: async () => {
       const p = await save()
+      // Saved as a draft even if submitting fails, so nothing typed is lost.
+      setSaved(values)
       return api<Project>(`/projects/${p.id}/submit/`, { method: 'POST' })
     },
-    onSuccess: (p) => { storeProject(qc, p); router.replace(`/project/${p.id}`) },
+    onSuccess: (p) => { storeProject(qc, p); leaveTo(p.id) },
     onError: showServerErrors,
   })
   const saveChanges = useMutation({
     mutationFn: save,
-    onSuccess: (p) => router.replace(`/project/${p.id}`),
+    onSuccess: (p) => leaveTo(p.id),
     onError: showServerErrors,
   })
   const busy = saveDraft.isPending || create.isPending || saveChanges.isPending
@@ -258,7 +276,7 @@ function LookupChips({ name, label, hint, v, e, set, project, format = (s) => s 
   const q = useLookups(CATEGORY[name])
   const options = withCurrent(q.data, project?.[name] as Ref[]).map((o) => ({ value: o.id, label: format(o.value) }))
   return (
-    <Field label={label} error={e[name]} hint={hint}>
+    <Field label={label} error={e[name]} hint={q.isError ? 'This list could not be loaded. Go back and open the form again.' : hint}>
       {q.isLoading ? <Small>Loading…</Small> : <Chips label={label} options={options} value={v[name]} onChange={(x) => set(name, x)} />}
     </Field>
   )
@@ -280,13 +298,13 @@ function CustomerStep(p: StepProps & { picksSalesPerson: boolean; ownName: strin
   return (
     <>
       <Section title="Customer and project">
-        <Text_ {...p} f="customer_name" label="Customer name" autoComplete="organization-title" />
-        <Text_ {...p} f="project_name" label="Project name" />
+        <Text_ {...p} f="customer_name" label="Customer name" autoComplete="organization-title" maxLength={256} />
+        <Text_ {...p} f="project_name" label="Project name" maxLength={256} />
       </Section>
       <Section title="Contact person at the customer">
-        <Text_ {...p} f="contact_person_name" label="Name" autoComplete="off" />
+        <Text_ {...p} f="contact_person_name" label="Name" autoComplete="off" maxLength={256} />
         <Text_ {...p} f="contact_phone" label="Mobile number" hint="10 digits, without +91" keyboardType="number-pad" maxLength={10} autoComplete="off" />
-        <Text_ {...p} f="contact_email" label="Email" keyboardType="email-address" autoCapitalize="none" autoCorrect={false} autoComplete="off" />
+        <Text_ {...p} f="contact_email" label="Email" keyboardType="email-address" autoCapitalize="none" autoCorrect={false} autoComplete="off" maxLength={254} />
       </Section>
       <Section title="Opportunity">
         {picksSalesPerson ? (

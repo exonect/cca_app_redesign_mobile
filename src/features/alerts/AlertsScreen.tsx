@@ -75,7 +75,7 @@ export function AlertsScreen() {
               : <EmptyState title={tab === 'unread' ? "You're all caught up" : 'No notifications yet'}
                   body="You'll hear here when projects you work on change, when trials close and when cube tests are due." />
         }
-        ListFooterComponent={list.isFetchingNextPage ? <ActivityIndicator color={color.ink} accessibilityLabel="Loading more" /> : undefined}
+        ListFooterComponent={list.isFetchingNextPage ? <ActivityIndicator color={color.ink} accessibilityLabel="Loading more" /> : list.isFetchNextPageError ? <ErrorState error={list.error} onRetry={() => { void list.fetchNextPage() }} /> : undefined}
       />
     </View>
   )

@@ -31,4 +31,11 @@ describe('project form model', () => {
     expect(body).not.toHaveProperty('sales_person')
     expect(toPayload({ ...EMPTY, sales_person: '9' }, true).sales_person).toBe(9)
   })
+
+  it('limits whole digits like the server decimal columns', () => {
+    expect(validate({ ...EMPTY, potential_cr: '123456789' }).potential_cr).toBe('Enter the potential with at most 8 digits before the decimal point.')
+    expect(validate({ ...EMPTY, potential_cr: '12345678.99', selling_basic_price: '1234567890.5' })).toEqual({})
+    expect(validate({ ...EMPTY, bulk_and_barrel: '12345678901' }).bulk_and_barrel).toMatch('at most 10 digits')
+    expect(validate({ ...EMPTY, potential_cr: '-1' }).potential_cr).toMatch('0 or more')
+  })
 })

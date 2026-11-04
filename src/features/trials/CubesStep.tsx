@@ -14,9 +14,9 @@ import { Banner, Button, Screen, Small } from '@/ui/kit'
 import { color, font, radius } from '@/ui/theme'
 
 import { istDay, shortDate } from './format'
-import { cubePayload, cubeRows, pct, requirementTargets, sortAges, type CubeEntry } from './forms'
+import { badNonNegative, cubePayload, cubeProblem, cubeRows, pct, requirementTargets, sortAges, type CubeEntry } from './forms'
 import { CellInput, cell, StepFooter, TableHead } from './parts'
-import { saveError, useSaver, useWorkspace } from './workspace'
+import { saveError, useReloadTrial, useSaver, useWorkspace } from './workspace'
 
 const OPTIONAL_AGES = Object.keys(AGES).filter((a) => !STANDARD_AGES.includes(a))
 const COLS: (number | 'flex')[] = [44, 'flex', 'flex', 'flex']
@@ -54,6 +54,7 @@ export function CubesStep({ canEdit, banners }: { canEdit: boolean; banners: Rea
     ages.find((a) => ageState(trial, a, today) === 'today') ?? ages.find((a) => ageState(trial, a, today) !== 'saved') ?? ages[ages.length - 1])
   const [forms, setForms] = useState<Record<string, AgeForm>>({})
   const [errors, setErrors] = useState<Record<string, string>>({})
+  const reload = useReloadTrial(trial.id)
   const target = requirementTargets(project).strength
   const targetLabel = target ? `${target.value} N/mm² at ${AGES[target.age]?.[0] ?? '28 days'}` : null
 
@@ -69,6 +70,13 @@ export function CubesStep({ canEdit, banners }: { canEdit: boolean; banners: Rea
     const f = forms[age]
     if (!f) return true
     setErrors((e) => ({ ...e, [age]: '' }))
+    const local = cubeProblem(f.rows)
+    if (local) {
+      setErrors((x) => ({ ...x, [age]: local }))
+      notify({ tone: 'error', text: `${AGES[age][0]}: ${local}` })
+      setSelected(age)
+      return false
+    }
     try {
       const t = await m.mutateAsync({ age, body: cubePayload(f.rows) })
       accept(t)
@@ -80,6 +88,7 @@ export function CubesStep({ canEdit, banners }: { canEdit: boolean; banners: Rea
       const fe = fieldErrors(e)
       const msg = Object.values(fe)[0] ?? saveError(e, fe)
       setErrors((x) => ({ ...x, [age]: msg }))
+      reload(e)
       notify({ tone: 'error', text: `${AGES[age][0]}: ${msg}` })
       setSelected(age)
       return false
@@ -224,11 +233,11 @@ function AgeCard({ age, form, dirty, canEdit, target, error, onChange, onRemove 
           <Text style={[{ fontFamily: font.semibold, fontSize: 15, color: color.ink }, cell(44)]}>{i + 1}</Text>
           <View style={cell('flex')}>
             <CellInput accessibilityLabel={`${label}, cube ${i + 1} weight in kilograms`} value={r.weight} editable={canEdit}
-              invalid={(n(r.weight) ?? 0) < 0} onChangeText={(v) => onChange(i, 'weight', v)} />
+              invalid={badNonNegative(r.weight)} onChangeText={(v) => onChange(i, 'weight', v)} />
           </View>
           <View style={cell('flex')}>
             <CellInput accessibilityLabel={`${label}, cube ${i + 1} load in kilonewtons`} value={r.load} editable={canEdit}
-              invalid={(n(r.load) ?? 0) < 0} onChangeText={(v) => onChange(i, 'load', v)} />
+              invalid={badNonNegative(r.load)} onChangeText={(v) => onChange(i, 'load', v)} />
           </View>
           <Text testID={`str-${age}-${i}`} style={[{ fontFamily: font.semibold, fontSize: 16, color: color.ink, textAlign: 'right', fontVariant: ['tabular-nums'] }, cell('flex')]}>
             {f2(strength(r.load)) || '–'}

@@ -150,3 +150,50 @@ describe('closing', () => {
     expect(await screen.findByText('Trial closed. WEST202611471902-03, met expectation.')).toBeTruthy()
   })
 })
+
+describe('error handling', () => {
+  it('stops cube text before saving and says which cube', async () => {
+    serve(makeTrial())
+    await open(4)
+    await fireEvent.changeText(await screen.findByLabelText('7 days, cube 2 load in kilonewtons'), '7O2')
+    await fireEvent.press(screen.getByRole('button', { name: 'Save 7 day results' }))
+    expect(await screen.findAllByText(/Check cube 2\./)).not.toHaveLength(0)
+    expect(mockApi).not.toHaveBeenCalledWith('/trials/t-1/cubes/7d/', expect.anything())
+  })
+
+  it('closes once however often Close trial is tapped', async () => {
+    let closes = 0
+    let finish: (t: Trial) => void = () => undefined
+    serve(makeTrial(), (path) => {
+      if (path !== '/trials/t-1/close/') return undefined
+      closes += 1
+      return new Promise<Trial>((resolve) => { finish = resolve })
+    })
+    await open(5)
+    await fireEvent.press(await screen.findByRole('radio', { name: 'Met expectation' }))
+    const button = screen.getByRole('button', { name: 'Close trial' })
+    await fireEvent.press(button)
+    await fireEvent.press(button)
+    await waitFor(() => expect(closes).toBe(1))
+    finish(makeTrial({ status: 'closed', outcome: 'met', outcome_label: 'Met expectation', actions: { edit: false, start: false, close: false, edit_cubes: false, delete: false, attach: false } }))
+    expect(await screen.findByText('Trial closed. WEST202611471902-03, met expectation.')).toBeTruthy()
+    expect(closes).toBe(1)
+  })
+
+  it('reloads the trial when a save is refused because it was closed meanwhile', async () => {
+    const { ApiError } = jest.requireMock('@/api/client')
+    let gets = 0
+    serve(makeTrial(), (path, opts) => {
+      if (path === '/trials/t-1/' && !opts?.method) { gets += 1; return undefined }
+      if (path === '/trials/t-1/' && opts?.method === 'PATCH') {
+        throw new ApiError(409, 'not_allowed', 'Closed trials are read only. Cube results can still be added by a Sales Admin.')
+      }
+      return undefined
+    })
+    await open(3)
+    await fireEvent.changeText(await screen.findByLabelText(/Slump at 30 minutes/), '150')
+    await fireEvent.press(screen.getByRole('button', { name: 'Save' }))
+    expect(await screen.findByText('Closed trials are read only. Cube results can still be added by a Sales Admin.')).toBeTruthy()
+    await waitFor(() => expect(gets).toBeGreaterThan(1))
+  })
+})

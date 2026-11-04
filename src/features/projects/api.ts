@@ -2,6 +2,7 @@
 import { useInfiniteQuery, useQuery, type QueryClient } from '@tanstack/react-query'
 
 import { api, type Page, type Query } from '@/api/client'
+import { statusOf } from '@/api/errors'
 import type { Pipeline, Project, ProjectEvent, ProjectListItem, TrialListItem, User } from '@/shared/types'
 
 export const PAGE_SIZE = 25
@@ -79,4 +80,11 @@ export function invalidateProject(qc: QueryClient, id?: string) {
 export function storeProject(qc: QueryClient, p: Project) {
   qc.setQueryData(projectKeys.detail(p.id), p)
   invalidateProject(qc, p.id)
+}
+
+/** After a refused action (409 business rule, 404 gone, 403 no longer allowed)
+ * the project on screen is out of date: reload it so the buttons match. */
+export function refreshAfterRefusal(qc: QueryClient, id: string, e: unknown) {
+  const status = statusOf(e)
+  if (status === 409 || status === 404 || status === 403) invalidateProject(qc, id)
 }

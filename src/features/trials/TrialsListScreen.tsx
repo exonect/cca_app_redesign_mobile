@@ -65,7 +65,7 @@ export function TrialsListScreen() {
         ListEmptyComponent={q.isPending ? <Loading label="Loading trials" />
           : q.isError ? <ErrorState error={q.error} onRetry={() => q.refetch()} />
             : <EmptyState title="No trials match" body={status.length || term ? 'Clear the search or choose another status.' : 'Trials appear here once a project has one.'} />}
-        ListFooterComponent={q.isFetchingNextPage ? <Loading label="Loading more" /> : undefined}
+        ListFooterComponent={q.isFetchingNextPage ? <Loading label="Loading more" /> : q.isFetchNextPageError ? <ErrorState error={q.error} onRetry={() => { void q.fetchNextPage() }} /> : undefined}
         renderItem={({ item: t }) => (
           <Pressable accessibilityRole="button" accessibilityLabel={`${t.code ?? 'Draft trial'}, ${t.project_name}, ${t.status_label}`}
             onPress={() => router.push({ pathname: '/trial/[id]', params: { id: t.id } })}

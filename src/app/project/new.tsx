@@ -7,3 +7,5 @@ export default function ProjectFormRoute() {
   const { id } = useLocalSearchParams<{ id?: string }>()
   return <ProjectFormScreen key={id ?? 'new'} id={id || undefined} />
 }
+
+export { ScreenErrorBoundary as ErrorBoundary } from '@/ui/ErrorFallback'

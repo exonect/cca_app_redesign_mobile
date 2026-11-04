@@ -86,7 +86,7 @@ export function ProjectsScreen() {
                   action={canCreate ? <Button title="New project" variant="primary" onPress={() => router.push('/project/new')} /> : undefined} />
               )
         }
-        ListFooterComponent={list.isFetchingNextPage ? <ActivityIndicator color={color.ink} accessibilityLabel="Loading more projects" /> : undefined}
+        ListFooterComponent={list.isFetchingNextPage ? <ActivityIndicator color={color.ink} accessibilityLabel="Loading more projects" /> : list.isFetchNextPageError ? <ErrorState error={list.error} onRetry={() => { void list.fetchNextPage() }} /> : undefined}
       />
     </View>
   )

@@ -91,7 +91,7 @@ export function RecipesScreen() {
                   action={<Button title="Clear search and filter" onPress={() => { setText(''); setFamily('') }} />} />
                 : <EmptyState title="No recipes yet" body="Add a recipe to record an admixture formulation. Active recipes appear in the product list on trials." />
         }
-        ListFooterComponent={list.isFetchingNextPage ? <ActivityIndicator color={color.ink} accessibilityLabel="Loading more recipes" /> : undefined}
+        ListFooterComponent={list.isFetchingNextPage ? <ActivityIndicator color={color.ink} accessibilityLabel="Loading more recipes" /> : list.isFetchNextPageError ? <ErrorState error={list.error} onRetry={() => { void list.fetchNextPage() }} /> : undefined}
       />
     </View>
   )

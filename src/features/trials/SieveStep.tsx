@@ -13,7 +13,7 @@ import { color, font, radius } from '@/ui/theme'
 
 import { GradingChart } from './charts'
 import { num } from './format'
-import { SIEVE_MATERIAL_LABEL, SIEVE_MATERIAL_SHORT, SIEVE_MATERIALS, sieveForm, sievePayload, type SieveForm, type SieveMaterial } from './forms'
+import { badNonNegative, SIEVE_MATERIAL_LABEL, SIEVE_MATERIAL_SHORT, SIEVE_MATERIALS, sieveForm, sievePayload, sieveProblems, type SieveForm, type SieveMaterial } from './forms'
 import { CellInput, cell, Section, Segmented, SourceNote, StepActions, TableHead, Verdict } from './parts'
 import { useStepForm, useWorkspace } from './workspace'
 
@@ -41,10 +41,11 @@ export function useGradingLimits() {
 }
 
 const COLS: (number | 'flex')[] = [76, 'flex', 'flex']
+const SHOWN = ['sieves', 'proportions'] as const
 
 export function SieveStep({ readOnly, banners }: { readOnly: boolean; banners: ReactNode }) {
   const { trial, header } = useWorkspace()
-  const { form, setForm, errors, dirty } = useStepForm<SieveForm>('sieve', sieveForm, sievePayload)
+  const { form, setForm, errors, dirty } = useStepForm<SieveForm>('sieve', sieveForm, sievePayload, sieveProblems, SHOWN)
   const [material, setMaterial] = useState<SieveMaterial>(() => SIEVE_MATERIALS.find((m) => !trial.results?.sieves?.[m]?.complete) ?? '20mm')
   const limits = useGradingLimits()
 
@@ -70,7 +71,7 @@ export function SieveStep({ readOnly, banners }: { readOnly: boolean; banners: R
 
   const a = analyses[material]
   const serverErrors = (trial.results?.errors ?? []).filter((e) => /^(20mm|10mm|river_sand|crushed_sand):|Proportions/.test(e))
-  const fieldError = errors.sieves ?? errors.proportions
+  const fieldError = [errors.sieves, errors.proportions].filter(Boolean).join(' ')
 
   return (
     <Screen header={header} footer={<StepActions canSave={!readOnly} label="Sieve analysis" />}>
@@ -82,13 +83,13 @@ export function SieveStep({ readOnly, banners }: { readOnly: boolean; banners: R
         <TableHead cols={['IS sieve', 'Retained, g', 'Passing, %']} template={COLS} />
         {form.sieves[material].map((row, i) => {
           const out = a.rows.find((r) => r.sieve === row.sieve)
-          const negative = (n(row.retained) ?? 0) < 0
+          const invalid = badNonNegative(row.retained)
           return (
             <View key={row.sieve} style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 12, paddingVertical: 2, borderTopWidth: 1, borderColor: color.divider }}>
               <Text style={[{ fontFamily: font.medium, fontSize: 15, color: color.ink }, cell(76)]}>{SIEVE_LABEL[row.sieve]}</Text>
               <View style={cell('flex')}>
                 <CellInput accessibilityLabel={`Weight retained on ${SIEVE_LABEL[row.sieve]}, grams`} value={row.retained} editable={!readOnly}
-                  invalid={negative} onChangeText={(v) => setRetained(i, v)} />
+                  invalid={invalid} onChangeText={(v) => setRetained(i, v)} />
               </View>
               <Text testID={`pass-${row.sieve}`} style={[{ fontFamily: font.semibold, fontSize: 16, color: color.ink, textAlign: 'right', fontVariant: ['tabular-nums'] }, cell('flex')]}>
                 {f2(out?.passing) || '–'}
@@ -114,7 +115,7 @@ export function SieveStep({ readOnly, banners }: { readOnly: boolean; banners: R
             <View key={m} style={{ width: '47%', flexGrow: 1, gap: 4 }}>
               <Small>{SIEVE_MATERIAL_LABEL[m]}, %</Small>
               <CellInput accessibilityLabel={`${SIEVE_MATERIAL_LABEL[m]} proportion, percent`} value={form.proportions[m]} editable={!readOnly}
-                onChangeText={(v) => setProportion(m, v)} />
+                invalid={badNonNegative(form.proportions[m])} onChangeText={(v) => setProportion(m, v)} />
             </View>
           ))}
         </View>

@@ -9,7 +9,7 @@ import type { Project, ProjectStatus, Ref, Trial, TrialListItem } from '@/shared
 import { Body, Button, Card, EmptyState, ErrorState, H1, H2, Loading, OutcomeChip, PROJECT_STATUS_LABEL, ProjectStatusChip, Small, Strong, TrialStatusChip } from '@/ui/kit'
 import { color, font, radius, TOUCH } from '@/ui/theme'
 
-import { invalidateProject, projectKeys, storeProject, useProject, useProjectEvents, useProjectTrials } from './api'
+import { invalidateProject, projectKeys, refreshAfterRefusal, storeProject, useProject, useProjectEvents, useProjectTrials } from './api'
 import { AssignCtSheet } from './AssignCtSheet'
 import { CompleteSheet } from './CompleteSheet'
 import { date, num, shortDate } from './format'
@@ -70,10 +70,12 @@ export function ProjectDetail({ project: p }: { project: Project }) {
   const requestSupport = useMutation({
     mutationFn: (note: string) => api<Project>(`/projects/${p.id}/request-support/`, { body: { note } }),
     onSuccess: (r) => { storeProject(qc, r); setNotice('Support requested'); close() },
+    onError: (e) => refreshAfterRefusal(qc, p.id, e),
   })
   const reopen = useMutation({
     mutationFn: (note: string) => api<Project>(`/projects/${p.id}/reopen/`, { body: { note } }),
     onSuccess: (r) => { storeProject(qc, r); setNotice('Project reopened'); close() },
+    onError: (e) => refreshAfterRefusal(qc, p.id, e),
   })
   const remove = useMutation({
     mutationFn: () => api(`/projects/${p.id}/`, { method: 'DELETE' }),
@@ -82,12 +84,13 @@ export function ProjectDetail({ project: p }: { project: Project }) {
       invalidateProject(qc)
       router.replace('/projects')
     },
+    onError: (e) => refreshAfterRefusal(qc, p.id, e),
   })
   const startTrial = useMutation({
     mutationFn: () => api<Trial>('/trials/', { body: { project: p.id } }),
     onMutate: () => setStartError(null),
     onSuccess: (t) => { invalidateProject(qc, p.id); router.push(`/trial/${t.id}`) },
-    onError: setStartError,
+    onError: (e) => { setStartError(e); refreshAfterRefusal(qc, p.id, e) },
   })
 
   // One primary (red) action: the most useful next step the user may take.

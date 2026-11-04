@@ -4,6 +4,7 @@ import { ActivityIndicator, FlatList, Pressable, ScrollView, Text, View } from '
 import { z } from 'zod'
 
 import { api, fieldErrors, type Page } from '@/api/client'
+import { errorMessage, otherErrors } from '@/api/errors'
 import { useLookups } from '@/api/hooks'
 import { useAuth } from '@/auth/AuthProvider'
 import type { Role, User } from '@/shared/types'
@@ -122,7 +123,7 @@ export function UsersScreen() {
                 : status === 'inactive' ? <EmptyState title="No inactive users" body="Users you deactivate appear here. They keep their projects and trials, and can be reactivated." />
                   : <EmptyState title="No users yet" body="Add the people who will use CCA. They sign in with their Thermax Microsoft account." />
         }
-        ListFooterComponent={list.isFetchingNextPage ? <ActivityIndicator color={color.ink} accessibilityLabel="Loading more users" /> : undefined}
+        ListFooterComponent={list.isFetchingNextPage ? <ActivityIndicator color={color.ink} accessibilityLabel="Loading more users" /> : list.isFetchNextPageError ? <ErrorState error={list.error} onRetry={() => { void list.fetchNextPage() }} /> : undefined}
       />
 
       <UserSheet key={editing === null ? 'closed' : editing === 'new' ? 'new' : editing.id} user={editing} onClose={() => setEditing(null)} onDone={setNotice} />
@@ -139,15 +140,17 @@ export function UsersScreen() {
   )
 }
 
-const schema = z.object({
-  email: z.string().trim().toLowerCase().email('Enter a full email address, for example name@thermaxglobal.com.'),
-  emp_id: z.string().trim().min(1, 'Enter the employee ID.'),
-  first_name: z.string().trim().min(1, 'Enter the first name.'),
-  last_name: z.string().trim(),
+/** Mirrors the server: email up to 254 and unique ignoring case (server), employee ID up to 20 and unique (server), names up to 150. */
+export const userSchema = z.object({
+  email: z.string().trim().toLowerCase().max(254, 'Use 254 characters or fewer.').email('Enter a full email address, for example name@thermaxglobal.com.'),
+  emp_id: z.string().trim().min(1, 'Enter the employee ID.').max(20, 'Use 20 characters or fewer.'),
+  first_name: z.string().trim().min(1, 'Enter the first name.').max(150, 'Use 150 characters or fewer.'),
+  last_name: z.string().trim().max(150, 'Use 150 characters or fewer.'),
   role: z.enum(['SP', 'CT', 'SAD', 'AD']),
   region: z.string(),
   manager: z.string(),
 })
+const schema = userSchema
 type Form = z.infer<typeof schema>
 type Key = keyof Form
 const FIELDS = Object.keys(schema.shape) as Key[]
@@ -179,7 +182,8 @@ function UserSheet({ user, onClose, onDone }: { user: User | 'new' | null; onClo
       const f = fieldErrors(e)
       const mapped = Object.fromEntries(Object.entries(f).filter(([k]) => (FIELDS as string[]).includes(k)))
       setErrors(mapped)
-      setFormError(Object.keys(mapped).length ? undefined : e instanceof Error ? e.message : 'The user could not be saved. Try again.')
+      const other = otherErrors(f, FIELDS)
+      setFormError(other[0] ?? (Object.keys(mapped).length ? undefined : errorMessage(e, 'The user could not be saved. Try again.')))
     },
   })
   const submit = () => {
@@ -205,17 +209,17 @@ function UserSheet({ user, onClose, onDone }: { user: User | 'new' | null; onClo
       <Banner>No password is set here. The person signs in with their Thermax Microsoft account and gets access once you add them.</Banner>
       {formError ? <Banner tone="error">{formError}</Banner> : null}
       <Field label="Thermax email" required error={errors.email}>
-        <TextField accessibilityLabel="Thermax email" keyboardType="email-address" autoCapitalize="none" autoCorrect={false} invalid={Boolean(errors.email)}
+        <TextField accessibilityLabel="Thermax email" keyboardType="email-address" autoCapitalize="none" autoCorrect={false} invalid={Boolean(errors.email)} maxLength={254}
           value={v.email} onChangeText={(t) => set('email', t)} />
       </Field>
       <Field label="First name" required error={errors.first_name}>
-        <TextField accessibilityLabel="First name" invalid={Boolean(errors.first_name)} value={v.first_name} onChangeText={(t) => set('first_name', t)} />
+        <TextField accessibilityLabel="First name" invalid={Boolean(errors.first_name)} maxLength={150} value={v.first_name} onChangeText={(t) => set('first_name', t)} />
       </Field>
       <Field label="Last name" error={errors.last_name}>
-        <TextField accessibilityLabel="Last name" value={v.last_name} onChangeText={(t) => set('last_name', t)} />
+        <TextField accessibilityLabel="Last name" maxLength={150} invalid={Boolean(errors.last_name)} value={v.last_name} onChangeText={(t) => set('last_name', t)} />
       </Field>
       <Field label="Employee ID" required error={errors.emp_id}>
-        <TextField accessibilityLabel="Employee ID" autoCapitalize="characters" invalid={Boolean(errors.emp_id)} value={v.emp_id} onChangeText={(t) => set('emp_id', t)} />
+        <TextField accessibilityLabel="Employee ID" autoCapitalize="characters" invalid={Boolean(errors.emp_id)} maxLength={20} value={v.emp_id} onChangeText={(t) => set('emp_id', t)} />
       </Field>
       <Field label="Role" error={errors.role}>
         <View accessibilityRole="radiogroup" accessibilityLabel="Role" style={{ gap: 8 }}>

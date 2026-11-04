@@ -3,7 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/api/client'
 import type { Project } from '@/shared/types'
 
-import { storeProject } from './api'
+import { refreshAfterRefusal, storeProject } from './api'
 import { ConfirmSheet } from './Sheet'
 
 /** "Mark completed" with its confirmation, from My work and the project screen. */
@@ -14,6 +14,7 @@ export function CompleteSheet({ project, open, onClose, onDone }: {
   const complete = useMutation({
     mutationFn: (id: string) => api<Project>(`/projects/${id}/complete/`, { method: 'POST' }),
     onSuccess: (p) => { storeProject(qc, p); onDone?.('Project marked completed'); close() },
+    onError: (e, id) => refreshAfterRefusal(qc, id, e),
   })
   const close = () => { complete.reset(); onClose() }
   return (

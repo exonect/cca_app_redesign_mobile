@@ -6,6 +6,7 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { z } from 'zod'
 
 import { api, ApiError, fieldErrors } from '@/api/client'
+import { errorMessage } from '@/api/errors'
 import { useLookups } from '@/api/hooks'
 import { useAuth } from '@/auth/AuthProvider'
 import { f2 } from '@/shared/calc'
@@ -100,16 +101,19 @@ function RecipeDetail({ recipe: r, canEdit, onEdit }: { recipe: Recipe; canEdit:
 
 // --- Edit -----------------------------------------------------------------------
 
-const schema = z.object({
+/** Mirrors the server: product name up to 100 (spaces collapsed), customer and project up to 256. */
+export const recipeSchema = z.object({
   family: z.enum(['neutrol', 'tecnos', 'plastard', 'other'], { message: 'Choose the product family.' }),
-  product_name: z.string().trim().min(1, 'Enter the product name.'),
+  product_name: z.string().transform((v) => v.split(/\s+/).filter(Boolean).join(' '))
+    .pipe(z.string().min(1, 'Enter the product name.').max(100, 'Use 100 characters or fewer.')),
   sfdc_no: z.string().trim().regex(/^(\d{6})?$/, 'Enter all 6 digits of the SFDC number, including leading zeros.'),
   location: z.string().min(1, 'Choose the formulation location.'),
-  customer_name: z.string(),
-  project_name: z.string(),
+  customer_name: z.string().trim().max(256, 'Use 256 characters or fewer.'),
+  project_name: z.string().trim().max(256, 'Use 256 characters or fewer.'),
   status: z.enum(['active', 'on_hold']),
 })
-type Form = z.infer<typeof schema>
+const schema = recipeSchema
+type Form = z.input<typeof schema>
 type FormKey = keyof Form
 type Body = Omit<Form, 'location'> & { location: number; components: Record<string, string>; confirm_new_version?: boolean }
 const BLANK: Form = { family: 'neutrol', product_name: '', sfdc_no: '', location: '', customer_name: '', project_name: '', status: 'active' }
@@ -154,8 +158,8 @@ export function RecipeForm({ recipe, onDone }: { recipe: Recipe | null; onDone: 
       setCompError(components)
       const mapped = Object.fromEntries(Object.entries(rest).filter(([k]) => k in BLANK)) as Partial<Record<FormKey, string>>
       setErrors(mapped)
-      const unmapped = Object.keys(rest).filter((k) => !(k in BLANK))
-      setFormError(components || (Object.keys(mapped).length && !unmapped.length) ? undefined : e instanceof Error ? e.message : 'The recipe could not be saved. Try again.')
+      const unmapped = Object.entries(rest).filter(([k]) => !(k in BLANK)).map(([, m]) => m)
+      setFormError(unmapped[0] ?? (components || Object.keys(mapped).length ? undefined : errorMessage(e, 'The recipe could not be saved. Try again.')))
     },
   })
   const remove = useMutation({
@@ -203,7 +207,7 @@ export function RecipeForm({ recipe, onDone }: { recipe: Recipe | null; onDone: 
           <Chips label="Product family" single options={FAMILY_OPTIONS} value={[v.family]} onChange={(x) => x[0] && set('family', x[0])} />
         </Field>
         <Field label="Product name" required error={errors.product_name} hint="For example Neutrol 585">
-          <TextField accessibilityLabel="Product name" invalid={Boolean(errors.product_name)} value={v.product_name} onChangeText={(t) => set('product_name', t)} />
+          <TextField accessibilityLabel="Product name" invalid={Boolean(errors.product_name)} maxLength={100} value={v.product_name} onChangeText={(t) => set('product_name', t)} />
         </Field>
         <View style={{ flexDirection: 'row', gap: 12 }}>
           <View style={{ flex: 1 }}>
@@ -224,11 +228,11 @@ export function RecipeForm({ recipe, onDone }: { recipe: Recipe | null; onDone: 
         <Field label="Status" hint="Only active recipes appear on trials.">
           <Chips label="Status" single options={STATUS_OPTIONS} value={[v.status]} onChange={(x) => x[0] && set('status', x[0])} />
         </Field>
-        <Field label="Customer">
-          <TextField accessibilityLabel="Customer" value={v.customer_name} onChangeText={(t) => set('customer_name', t)} />
+        <Field label="Customer" error={errors.customer_name}>
+          <TextField accessibilityLabel="Customer" maxLength={256} invalid={Boolean(errors.customer_name)} value={v.customer_name} onChangeText={(t) => set('customer_name', t)} />
         </Field>
-        <Field label="Customer project">
-          <TextField accessibilityLabel="Customer project" value={v.project_name} onChangeText={(t) => set('project_name', t)} />
+        <Field label="Customer project" error={errors.project_name}>
+          <TextField accessibilityLabel="Customer project" maxLength={256} invalid={Boolean(errors.project_name)} value={v.project_name} onChangeText={(t) => set('project_name', t)} />
         </Field>
         <Small>
           Formulator {recipe ? recipe.formulator_name ?? 'not recorded' : [user?.full_name, user?.emp_id].filter(Boolean).join(', ')}.

@@ -8,7 +8,8 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 
-import { api, ApiError, fieldErrors } from '@/api/client'
+import { api, fieldErrors } from '@/api/client'
+import { errorMessage, isApiError, otherErrors, statusOf } from '@/api/errors'
 import type { Project, Trial } from '@/shared/types'
 
 import type { StepNo } from './forms'
@@ -78,10 +79,13 @@ const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
 
 export const NOT_SAVED = 'Not saved. Fix the highlighted fields and save again.'
 
-/** Message for a failed save: the server's own message when it is not about fields. */
-export function saveError(e: unknown, fields: Record<string, string>) {
-  if (e instanceof ApiError && Object.keys(fields).length === 0) return e.message
-  return NOT_SAVED
+/** Message for a failed save: the server's own message when it is not about
+ * fields, and the message itself when it is about a field this step does not
+ * show (so it is never a "fix the highlighted fields" with nothing highlighted). */
+export function saveError(e: unknown, fields: Record<string, string>, shown?: readonly string[]) {
+  if (Object.keys(fields).length === 0) return isApiError(e) ? errorMessage(e) : errorMessage(e, 'Not saved. Try again.')
+  const hidden = shown ? otherErrors(fields, shown) : []
+  return hidden.length ? `Not saved. ${hidden[0]}` : NOT_SAVED
 }
 
 /**
@@ -91,8 +95,9 @@ export function saveError(e: unknown, fields: Record<string, string>) {
  * payloads, so typing a value back to what was saved clears the warning.
  */
 export function useStepForm<F>(key: string, init: (t: Trial) => F, payload: (f: F) => Record<string, unknown>,
-  validate?: (f: F) => Record<string, string>) {
+  validate?: (f: F) => Record<string, string>, shown?: readonly string[]) {
   const { trial, accept, notify } = useWorkspace()
+  const reload = useReloadTrial(trial.id)
   const [form, setForm] = useState<F>(() => init(trial))
   const [baseline, setBaseline] = useState<F>(form)
   const [errors, setErrors] = useState<Record<string, string>>({})
@@ -116,10 +121,11 @@ export function useStepForm<F>(key: string, init: (t: Trial) => F, payload: (f: 
     } catch (e) {
       const f = fieldErrors(e)
       setErrors(f)
-      notify({ tone: 'error', text: saveError(e, f) })
+      notify({ tone: 'error', text: saveError(e, f, shown) })
+      reload(e)
       return false
     }
-  }, [m, payload, form, accept, init, notify, validate])
+  }, [m, payload, form, accept, init, notify, validate, shown, reload])
 
   useSaver(key, dirty, save)
 
@@ -133,5 +139,15 @@ export function useAccept(id: string) {
     qc.invalidateQueries({ queryKey: ['trials'] })
     qc.invalidateQueries({ queryKey: ['project', t.project] })
     qc.invalidateQueries({ queryKey: ['trial', id, 'close-check'] })
+  }, [qc, id])
+}
+
+/** After a refused save (409 closed or not allowed, 404 deleted, 403) the
+ * trial on screen is out of date: reload it so the steps turn read only. */
+export function useReloadTrial(id: string) {
+  const qc = useQueryClient()
+  return useCallback((e: unknown) => {
+    const status = statusOf(e)
+    if (status === 409 || status === 404 || status === 403) void qc.invalidateQueries({ queryKey: ['trial', id] })
   }, [qc, id])
 }

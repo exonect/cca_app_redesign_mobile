@@ -4,11 +4,12 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import * as DocumentPicker from 'expo-document-picker'
 import * as ImagePicker from 'expo-image-picker'
-import { useState, type ReactNode } from 'react'
+import { useRef, useState, type ReactNode } from 'react'
 import { ActivityIndicator, Alert, Linking, Pressable, ScrollView, Text, View } from 'react-native'
 import Svg, { Circle, Path, Polyline, Rect } from 'react-native-svg'
 
-import { api, ApiError, fieldErrors } from '@/api/client'
+import { api, ApiError, fieldErrors, UPLOAD_TIMEOUT_MS } from '@/api/client'
+import { errorMessage } from '@/api/errors'
 import type { Outcome, Trial } from '@/shared/types'
 import { Banner, Button, Field, OutcomeChip, Screen, Small, TextField } from '@/ui/kit'
 import { color, font, radius, TOUCH } from '@/ui/theme'
@@ -16,16 +17,17 @@ import { color, font, radius, TOUCH } from '@/ui/theme'
 import { attachmentForm, attachmentProblem, extOf, MIME, photoName, type PickedFile } from './attachments'
 import { downloadAndShare } from './download'
 import { date, fileSize, shortDate } from './format'
-import { conclusionForm, conclusionPayload, SIGNATORIES, splitWarnings, type ConclusionForm } from './forms'
+import { conclusionForm, conclusionPayload, conclusionProblems, SIGNATORIES, SIGNATORY_MAX, splitWarnings, type ConclusionForm } from './forms'
 import { RadioCard, Section, StepFooter } from './parts'
 import { SignaturePad } from './SignaturePad'
-import { useStepForm, useWorkspace } from './workspace'
+import { useReloadTrial, useStepForm, useWorkspace } from './workspace'
 
 const REMARKS_MAX = 1000
+const SHOWN = ['remarks', ...SIGNATORIES.flatMap((s) => [s.name, s.sign])]
 
 export function ConclusionStep({ readOnly, banners }: { readOnly: boolean; banners: ReactNode }) {
   const { trial, project, header, accept, saveAll, notify, dirty, saving, startTrial, starting } = useWorkspace()
-  const { form, setForm, errors } = useStepForm<ConclusionForm>('conclusion', (t) => conclusionForm(t, project), conclusionPayload)
+  const { form, setForm, errors } = useStepForm<ConclusionForm>('conclusion', (t) => conclusionForm(t, project), conclusionPayload, conclusionProblems, SHOWN)
   const [outcome, setOutcome] = useState<Outcome>(trial.outcome)
   const [outcomeError, setOutcomeError] = useState<string | null>(null)
   const [drawing, setDrawing] = useState(false)
@@ -41,6 +43,9 @@ export function ConclusionStep({ readOnly, banners }: { readOnly: boolean; banne
   const pending = checks.filter((c) => c.status === 'pending').length
   const notMet = checks.filter((c) => c.status === 'not_met').length
 
+  const reload = useReloadTrial(trial.id)
+  // One close at a time: saving first takes a moment, and a second tap must not close twice.
+  const closingNow = useRef(false)
   const close = useMutation({
     mutationFn: (confirmed: boolean) => api<Trial>(`/trials/${trial.id}/close/`, {
       body: { outcome, remarks: form.remarks, ...(confirmed ? { confirm: true } : {}) },
@@ -48,6 +53,7 @@ export function ConclusionStep({ readOnly, banners }: { readOnly: boolean; banne
   })
 
   async function closeTrial(confirmed = false) {
+    if (closingNow.current) return
     setOutcomeError(null)
     if (!outcome) {
       const msg = 'Choose a conclusion before closing the trial.'
@@ -55,8 +61,9 @@ export function ConclusionStep({ readOnly, banners }: { readOnly: boolean; banne
       notify({ tone: 'error', text: msg })
       return
     }
-    if (!confirmed && !(await saveAll())) return
+    closingNow.current = true
     try {
+      if (!confirmed && !(await saveAll())) return
       const t = await close.mutateAsync(confirmed)
       accept(t)
       notify({ tone: 'ok', text: `Trial closed. ${t.code ?? ''}, ${t.outcome_label.toLowerCase()}.`.replace(' ,', ',') })
@@ -65,12 +72,15 @@ export function ConclusionStep({ readOnly, banners }: { readOnly: boolean; banne
         const warnings = check.data?.warnings?.length ? check.data.warnings : splitWarnings(e.message)
         Alert.alert('Close the trial anyway?',
           `The conclusion will rest on the results entered so far:\n\n${warnings.map((w) => `• ${w}`).join('\n')}\n\nAn Admin or Sales Admin can still add cube results after closing.`,
-          [{ text: 'Keep it open', style: 'cancel' }, { text: 'Close trial', style: 'destructive', onPress: () => { closeTrial(true) } }])
+          [{ text: 'Keep it open', style: 'cancel' }, { text: 'Close trial', style: 'destructive', onPress: () => { void closeTrial(true) } }])
         return
       }
       const f = fieldErrors(e)
       if (f.outcome) setOutcomeError(f.outcome)
-      notify({ tone: 'error', text: f.outcome ?? (e instanceof Error ? e.message : 'The trial was not closed. Try again.') })
+      notify({ tone: 'error', text: f.outcome ?? errorMessage(e, 'The trial was not closed. Try again.') })
+      reload(e)
+    } finally {
+      closingNow.current = false
     }
   }
 
@@ -80,7 +90,7 @@ export function ConclusionStep({ readOnly, banners }: { readOnly: boolean; banne
   ) : closing ? (
     <StepFooter note="Locks the trial and moves the project to Trials closed if this is the last open trial.">
       <Button title="Save" onPress={async () => { if (await saveAll()) notify({ tone: 'ok', text: 'Conclusion saved' }) }} disabled={!dirty} busy={saving && !close.isPending} style={{ flex: 1 }} />
-      <Button variant="primary" title="Close trial" onPress={() => closeTrial(false)} busy={close.isPending} style={{ flex: 1.4 }} />
+      <Button variant="primary" title="Close trial" onPress={() => { void closeTrial(false) }} busy={close.isPending} disabled={saving} style={{ flex: 1.4 }} />
     </StepFooter>
   ) : !readOnly ? (
     <StepFooter><Button title="Save" onPress={async () => { if (await saveAll()) notify({ tone: 'ok', text: 'Conclusion saved' }) }} disabled={!dirty} busy={saving} style={{ flex: 1 }} /></StepFooter>
@@ -149,12 +159,12 @@ export function ConclusionStep({ readOnly, banners }: { readOnly: boolean; banne
         {SIGNATORIES.map((s) => (
           <View key={s.name} style={{ gap: 8, paddingBottom: 6 }}>
             <Field label={s.label} error={errors[s.name]} hint={s.name === 'signatory_sales' && salesPerson ? 'From the project; change it if someone else signs.' : undefined}>
-              <TextField accessibilityLabel={`${s.label}, name`} placeholder="Name" value={form[s.name]} editable={!readOnly} invalid={!!errors[s.name]}
+              <TextField accessibilityLabel={`${s.label}, name`} placeholder="Name" value={form[s.name]} editable={!readOnly} invalid={!!errors[s.name]} maxLength={SIGNATORY_MAX}
                 onChangeText={(v) => setForm((f) => ({ ...f, [s.name]: v }))} />
             </Field>
             <SignaturePad label={form[s.name] || s.label} value={form[s.sign]} disabled={readOnly} onDrawing={setDrawing}
               onChange={(v) => setForm((f) => ({ ...f, [s.sign]: v }))} />
-            {errors[s.sign] ? <Text style={{ fontFamily: font.regular, fontSize: 13, color: color.error }}>{errors[s.sign]}</Text> : null}
+            {errors[s.sign] ? <Text accessibilityLiveRegion="polite" style={{ fontFamily: font.regular, fontSize: 13, color: color.error }}>{errors[s.sign]}</Text> : null}
           </View>
         ))}
       </Section>
@@ -181,6 +191,7 @@ function CheckIcon({ status }: { status: 'met' | 'not_met' | 'pending' }) {
 function Attachments() {
   const { trial, notify } = useWorkspace()
   const qc = useQueryClient()
+  const reload = useReloadTrial(trial.id)
   const [problems, setProblems] = useState<string[]>([])
   const [uploading, setUploading] = useState(0)
   const [opening, setOpening] = useState<number | null>(null)
@@ -197,11 +208,12 @@ function Attachments() {
     let ok = 0
     for (const f of good) {
       try {
-        await api(`/trials/${trial.id}/attachments/`, { form: attachmentForm(f) })
+        await api(`/trials/${trial.id}/attachments/`, { form: attachmentForm(f), timeoutMs: UPLOAD_TIMEOUT_MS })
         ok += 1
       } catch (e) {
-        const msg = fieldErrors(e).file ?? (e instanceof Error ? e.message : 'Upload failed.')
+        const msg = fieldErrors(e).file ?? errorMessage(e, 'Upload failed. Try again.')
         setProblems((p) => [...p, `${f.name}: ${msg}`])
+        reload(e)
       }
       setUploading((x) => x - 1)
     }
@@ -209,6 +221,10 @@ function Attachments() {
   }
 
   async function takePhoto() {
+    try { await photo() } catch { setProblems(['The camera could not be opened. Try again, or use Choose file.']) }
+  }
+
+  async function photo() {
     const perm = await ImagePicker.requestCameraPermissionsAsync()
     if (!perm.granted) {
       Alert.alert('Camera access is off', 'Allow CCA to use the camera in your phone settings to photograph cubes and slump tests.', [
@@ -225,7 +241,13 @@ function Attachments() {
   }
 
   async function chooseFile() {
-    const r = await DocumentPicker.getDocumentAsync({ multiple: true, copyToCacheDirectory: true, type: Object.values(MIME).filter((v, i, xs) => xs.indexOf(v) === i) })
+    let r: DocumentPicker.DocumentPickerResult
+    try {
+      r = await DocumentPicker.getDocumentAsync({ multiple: true, copyToCacheDirectory: true, type: Object.values(MIME).filter((v, i, xs) => xs.indexOf(v) === i) })
+    } catch {
+      setProblems(['Files could not be opened on this phone. Try again.'])
+      return
+    }
     if (r.canceled || !r.assets?.length) return
     await upload(r.assets.map((a) => ({ uri: a.uri, name: a.name, type: a.mimeType ?? MIME[extOf(a.name)] ?? 'application/octet-stream', size: a.size })))
   }
@@ -233,7 +255,7 @@ function Attachments() {
   const remove = useMutation({
     mutationFn: (id: number) => api(`/trials/${trial.id}/attachments/${id}/`, { method: 'DELETE' }),
     onSuccess: () => { refresh(); notify({ tone: 'ok', text: 'File removed' }) },
-    onError: (e) => notify({ tone: 'error', text: e instanceof Error ? e.message : 'The file was not removed. Try again.' }),
+    onError: (e) => { notify({ tone: 'error', text: errorMessage(e, 'The file was not removed. Try again.') }); reload(e) },
   })
 
   function confirmRemove(id: number, name: string) {
@@ -246,7 +268,7 @@ function Attachments() {
   async function open(id: number, name: string, type: string) {
     setOpening(id)
     try { await downloadAndShare(`/trials/${trial.id}/attachments/${id}/`, name, type || MIME[extOf(name)] || 'application/octet-stream') }
-    catch (e) { notify({ tone: 'error', text: e instanceof Error ? e.message : 'Download failed.' }) }
+    catch (e) { notify({ tone: 'error', text: errorMessage(e, 'The file could not be opened. Try again.') }) }
     finally { setOpening(null) }
   }
 

@@ -3,6 +3,7 @@ import { useMemo, useState } from 'react'
 import { FlatList, Pressable, Text, View } from 'react-native'
 
 import { api, fieldErrors } from '@/api/client'
+import { errorMessage } from '@/api/errors'
 import { useLookups } from '@/api/hooks'
 import type { Lookup } from '@/shared/types'
 import { Button, EmptyState, ErrorState, Field, H2, Loading, Picker, Small, Strong, TextField } from '@/ui/kit'
@@ -93,6 +94,18 @@ export function MasterDataScreen() {
       />
     </View>
   )
+}
+
+export const VALUE_MAX = 200
+
+/** Mirrors the server: spaces trimmed and collapsed, not blank, up to 200
+ * characters, and numbers only for the numeric lists. */
+export function lookupValueProblem(raw: string, numeric: boolean): string | null {
+  const v = raw.split(/\s+/).filter(Boolean).join(' ')
+  if (!v) return 'Enter a value.'
+  if (v.length > VALUE_MAX) return `Use ${VALUE_MAX} characters or fewer.`
+  if (numeric && !/^-?(\d+(\.\d*)?|\.\d+)$/.test(v)) return 'This list only accepts numbers.'
+  return null
 }
 
 function singular(noun: string) {
@@ -214,12 +227,15 @@ function ValueEditor({ label, numeric, isCity, initial, submitLabel, onSave, onS
     onSuccess: onSaved,
     onError: (e) => {
       const f = fieldErrors(e)
-      setErrors(Object.keys(f).length ? f : { _: e instanceof Error ? e.message : 'The value was not saved. Try again.' })
+      const shown = isCity ? ['value', 'category', 'parent'] : ['value', 'category']
+      const other = Object.entries(f).filter(([k]) => !shown.includes(k)).map(([, v]) => v)
+      setErrors(Object.keys(f).length ? { ...f, ...(other.length ? { _: other[0] } : {}) } : { _: errorMessage(e, 'The value was not saved. Try again.') })
     },
   })
   const submit = () => {
     setErrors({})
-    if (!value.trim()) { setErrors({ value: 'Enter a value.' }); return }
+    const problem = lookupValueProblem(value, numeric)
+    if (problem) { setErrors({ value: problem }); return }
     if (isCity && !parent) { setErrors({ parent: 'Choose the region this city belongs to.' }); return }
     save.mutate()
   }
@@ -227,7 +243,7 @@ function ValueEditor({ label, numeric, isCity, initial, submitLabel, onSave, onS
   return (
     <View style={{ gap: 12 }}>
       <Field label={label} error={errors.value ?? errors.category}>
-        <TextField accessibilityLabel={label} autoFocus value={value} keyboardType={numeric ? 'decimal-pad' : 'default'}
+        <TextField accessibilityLabel={label} autoFocus value={value} keyboardType={numeric ? 'decimal-pad' : 'default'} maxLength={VALUE_MAX}
           invalid={Boolean(errors.value ?? errors.category)} onChangeText={setValue} onSubmitEditing={submit} returnKeyType="done" />
       </Field>
       {isCity ? (

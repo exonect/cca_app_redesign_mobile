@@ -12,6 +12,7 @@ import { SafeAreaView } from 'react-native-safe-area-context'
 import Svg, { Path, Polyline } from 'react-native-svg'
 
 import { api, ApiError, fieldErrors } from '@/api/client'
+import { errorMessage } from '@/api/errors'
 import type { Project, Trial } from '@/shared/types'
 import { Banner, Button, ErrorState, Header, Loading, Screen, TrialStatusChip } from '@/ui/kit'
 import { color, font, TOUCH } from '@/ui/theme'
@@ -23,7 +24,7 @@ import { parseStep, STEPS, stepDone, type StepNo } from './forms'
 import { FreshStep } from './FreshStep'
 import { MixStep } from './MixStep'
 import { SieveStep } from './SieveStep'
-import { useAccept, useSaverRegistry, WorkspaceContext, type Notice, type WorkspaceValue } from './workspace'
+import { useAccept, useReloadTrial, useSaverRegistry, WorkspaceContext, type Notice, type WorkspaceValue } from './workspace'
 
 const SHORT = ['Sieve', 'Mix', 'Fresh', 'Cubes', 'Close']
 
@@ -63,6 +64,7 @@ export function TrialScreen() {
 function Workspace({ trial, project, projectError, step }: { trial: Trial; project: Project | undefined; projectError: boolean; step: StepNo }) {
   const registry = useSaverRegistry()
   const acceptTrial = useAccept(trial.id)
+  const reload = useReloadTrial(trial.id)
   const [castError, setCastError] = useState<string | null>(null)
   const [notice, setNotice] = useState<Notice>(null)
   const [saving, setSaving] = useState(false)
@@ -105,10 +107,14 @@ function Workspace({ trial, project, projectError, step }: { trial: Trial; proje
   }, [registry, saveAll, step, switchTo])
 
   const start = useMutation({ mutationFn: () => api<Trial>(`/trials/${trial.id}/start/`, { method: 'POST' }) })
+  const startingNow = useRef(false)
   const startTrial = useCallback(async () => {
+    // One start at a time: saving first takes a moment, and a second tap must not start twice.
+    if (startingNow.current) return
+    startingNow.current = true
     setCastError(null)
-    if (registry.isDirty() && !(await saveAll())) return
     try {
+      if (registry.isDirty() && !(await saveAll())) return
       const t = await start.mutateAsync()
       accept(t)
       notify({ tone: 'ok', text: `Trial started. Its number is ${t.code}.` })
@@ -118,9 +124,14 @@ function Workspace({ trial, project, projectError, step }: { trial: Trial; proje
         setCastError(f.cast_at)
         if (step !== 2) switchTo(2)
         notify({ tone: 'error', text: f.cast_at })
-      } else notify({ tone: 'error', text: e instanceof Error ? e.message : 'The trial was not started. Try again.' })
+      } else {
+        notify({ tone: 'error', text: errorMessage(e, 'The trial was not started. Try again.') })
+        reload(e)
+      }
+    } finally {
+      startingNow.current = false
     }
-  }, [registry, saveAll, start, accept, notify, step, switchTo])
+  }, [registry, saveAll, start, accept, notify, step, switchTo, reload])
 
   // Leaving the screen (back button, gesture, tab) with unsaved work asks first.
   usePreventRemove(registry.dirty, ({ repeat }) => {
@@ -134,7 +145,7 @@ function Workspace({ trial, project, projectError, step }: { trial: Trial; proje
   async function pdf() {
     setPdfBusy(true)
     try { await downloadAndShare(`/trials/${trial.id}/report.pdf`, `${trial.code ?? 'draft_trial'}.pdf`, 'application/pdf') }
-    catch (e) { notify({ tone: 'error', text: e instanceof Error ? e.message : 'The PDF could not be made. Try again.' }) }
+    catch (e) { notify({ tone: 'error', text: errorMessage(e, 'The PDF could not be made. Try again.') }) }
     finally { setPdfBusy(false) }
   }
 

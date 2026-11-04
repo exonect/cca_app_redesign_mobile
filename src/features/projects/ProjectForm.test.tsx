@@ -10,8 +10,11 @@ import { ProjectDetail } from './ProjectScreen'
 
 const mockPush = jest.fn()
 const mockReplace = jest.fn()
+const mockPreventRemove = jest.fn((_dirty: boolean, _cb?: unknown) => mockAllowLeave)
+const mockAllowLeave = jest.fn()
 jest.mock('expo-router', () => ({
   router: { push: (...a: unknown[]) => mockPush(...a), replace: (...a: unknown[]) => mockReplace(...a), back: jest.fn(), canGoBack: () => true, navigate: jest.fn() },
+  usePreventRemove: (dirty: boolean, cb?: unknown) => mockPreventRemove(dirty, cb),
 }))
 jest.mock('react-native-safe-area-context', () => require('react-native-safe-area-context/jest/mock').default)
 jest.mock('@/auth/AuthProvider', () => ({
@@ -27,7 +30,7 @@ jest.mock('@/api/client', () => {
   return {
     ApiError,
     api: jest.fn(),
-    fieldErrors: (e: { fields?: Record<string, string[]> }) => Object.fromEntries(Object.entries(e?.fields ?? {}).map(([k, v]) => [k, v[0]])),
+    fieldErrors: jest.requireActual('@/api/errors').fieldErrors,
   }
 })
 const mockApi = api as jest.MockedFunction<typeof api>
@@ -55,7 +58,7 @@ const project = (over: Partial<Project> = {}): Project => ({
 })
 
 beforeEach(() => {
-  mockPush.mockReset(); mockReplace.mockReset(); mockApi.mockReset()
+  mockPush.mockReset(); mockReplace.mockReset(); mockApi.mockReset(); mockPreventRemove.mockClear(); mockAllowLeave.mockClear()
   mockApi.mockImplementation(async (path: string, opts?: { query?: Record<string, unknown> }) => {
     if (path === '/lookups/') return (lookups[String(opts?.query?.category)] ?? []) as never
     if (path.startsWith('/trials/') && opts?.query) return { count: 0, next: null, previous: null, results: [] } as never
@@ -86,6 +89,43 @@ describe('project form', () => {
     expect(await screen.findByText('SFDC number is required to create the project.')).toBeTruthy()
     expect(screen.getByText('Customer details')).toBeTruthy()
     expect(mockReplace).not.toHaveBeenCalled()
+  })
+})
+
+describe('project form errors and leaving', () => {
+  it('maps a nested list error to its field and says errors on fields the form does not show', async () => {
+    const p = project()
+    const base = mockApi.getMockImplementation()!
+    mockApi.mockImplementation(async (path: string, opts?: Parameters<typeof api>[1]) => {
+      if (path === '/projects/p1/' && opts?.method === 'PATCH') {
+        throw new ApiError(400, 'invalid', 'Some fields need attention.', {
+          cementitious_contents: { 0: ['Ensure this value is less than or equal to 999.'] } as unknown as string[],
+          created_by: ['This field is read only.'],
+        })
+      }
+      return base(path, opts)
+    })
+    await render(wrap(<ProjectForm project={p} />))
+    await fireEvent.press(screen.getByRole('button', { name: 'Save draft' }))
+    expect(await screen.findByText('This field is read only.')).toBeTruthy()
+    expect(screen.getByText('Ensure this value is less than or equal to 999.')).toBeTruthy()
+    expect(screen.getByText('Cementitious content')).toBeTruthy()
+  })
+
+  it('guards leaving only while there are unsaved changes, and lets a successful save through', async () => {
+    const p = project({ status: 'created', status_label: 'Created' })
+    const base = mockApi.getMockImplementation()!
+    mockApi.mockImplementation(async (path: string, opts?: Parameters<typeof api>[1]) => {
+      if (path === '/projects/p1/' && opts?.method === 'PATCH') return { ...p, project_name: 'Baner podium, phase 2' } as never
+      return base(path, opts)
+    })
+    await render(wrap(<ProjectForm project={p} />))
+    expect(mockPreventRemove.mock.calls.at(-1)?.[0]).toBe(false)
+    await fireEvent.changeText(screen.getByLabelText('Project name'), 'Baner podium, phase 2')
+    expect(mockPreventRemove.mock.calls.at(-1)?.[0]).toBe(true)
+    await fireEvent.press(screen.getAllByRole('button', { name: 'Save changes' })[0])
+    await waitFor(() => expect(mockReplace).toHaveBeenCalledWith('/project/p1'))
+    expect(mockAllowLeave).toHaveBeenCalled()
   })
 })
 

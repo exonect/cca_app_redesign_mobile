@@ -23,22 +23,25 @@ export const CATEGORY: Record<FkField | M2mField, string> = {
   grades_of_concrete: 'grade_of_concrete', wc_ratios_ssd: 'wc_ratio_ssd', compressive_strengths: 'compressive_strength',
 }
 
-const optionalDecimal = (label: string) => z.string().trim().refine(
-  (v) => v === '' || (/^\d+(\.\d{1,2})?$/.test(v) && Number(v) >= 0),
-  `Enter ${label} as a number of 0 or more, up to 2 decimals.`,
-)
+/** Money fields: 0 or more, up to 2 decimals, and no more whole digits than the
+ * server column holds (potential 10,2 so 8 digits; prices 12,2 so 10 digits). */
+const optionalDecimal = (label: string, wholeDigits: number) => z.string().trim()
+  .refine((v) => v === '' || /^\d+(\.\d{1,2})?$/.test(v), `Enter ${label} as a number of 0 or more, up to 2 decimals.`)
+  .refine((v) => !/^\d+(\.\d{1,2})?$/.test(v) || v.split('.')[0].replace(/^0+(?=\d)/, '').length <= wholeDigits,
+    `Enter ${label} with at most ${wholeDigits} digits before the decimal point.`)
 
 export const projectSchema = z.object({
   customer_name: z.string().trim().max(256, 'Use 256 characters or fewer.'),
   project_name: z.string().trim().max(256, 'Use 256 characters or fewer.'),
   contact_person_name: z.string().trim().max(256, 'Use 256 characters or fewer.'),
-  contact_email: z.string().trim().refine((v) => v === '' || z.email().safeParse(v).success, 'Enter an email address like name@company.com.'),
+  contact_email: z.string().trim().max(254, 'Use 254 characters or fewer.')
+    .refine((v) => v === '' || z.email().safeParse(v).success, 'Enter an email address like name@company.com.'),
   contact_phone: z.string().trim().refine((v) => v === '' || /^\d{10}$/.test(v), 'Enter a 10 digit phone number, without +91 or spaces.'),
   sfdc_no: z.string().trim().refine((v) => v === '' || /^\d{6}$/.test(v), 'Enter all 6 digits of the SFDC number, including leading zeros.'),
   sales_person: z.string(),
-  potential_cr: optionalDecimal('the potential'),
-  selling_basic_price: optionalDecimal('the bulk price'),
-  bulk_and_barrel: optionalDecimal('the barrel price'),
+  potential_cr: optionalDecimal('the potential', 8),
+  selling_basic_price: optionalDecimal('the bulk price', 10),
+  bulk_and_barrel: optionalDecimal('the barrel price', 10),
   remarks: z.string(),
   region: z.string(), city: z.string(), wc_ratio_corrected: z.string(), retention_time: z.string(), slump_flow: z.string(),
   strength_age: z.string(), sand_type: z.string(), fine_aggregate_source: z.string(), coarse_aggregate_source: z.string(),

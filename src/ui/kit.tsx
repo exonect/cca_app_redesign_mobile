@@ -5,6 +5,7 @@ import {
 } from 'react-native'
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 
+import { errorMessage, statusOf } from '@/api/errors'
 import type { CheckStatus, Outcome, ProjectStatus, TrialStatus } from '@/shared/types'
 
 import { color, font, radius, TOUCH } from './theme'
@@ -206,17 +207,21 @@ export function Loading({ label = 'Loading' }: { label?: string }) {
 export function EmptyState({ title, body, action }: { title: string; body?: string; action?: ReactNode }) {
   return <View style={{ padding: 24, gap: 8 }}><Strong>{title}</Strong>{body ? <Body style={s.muted}>{body}</Body> : null}{action}</View>
 }
+/** A failed load or action in plain words. Not found and no access cannot be
+ * fixed by trying again, so they get no Try again button. */
 export function ErrorState({ error, onRetry }: { error: unknown; onRetry?: () => void }) {
+  const status = statusOf(error)
+  const final = status === 403 || status === 404
   return (
-    <View accessibilityRole="alert" style={s.errorBox}>
-      <Body style={{ color: '#7A1A14', flex: 1 }}>{error instanceof Error ? error.message : 'Something went wrong.'}</Body>
-      {onRetry ? <Button title="Try again" onPress={onRetry} /> : null}
+    <View accessibilityRole="alert" accessibilityLiveRegion="polite" style={s.errorBox}>
+      <Body style={{ color: '#7A1A14', flex: 1 }}>{errorMessage(error)}</Body>
+      {onRetry && !final ? <Button title="Try again" onPress={onRetry} /> : null}
     </View>
   )
 }
 export function Banner({ tone = 'info', children }: { tone?: 'info' | 'warn' | 'error' | 'ok'; children: ReactNode }) {
   const t = { info: ['#DCE7F2', '#1F4568'], warn: ['#FCEBD7', '#5A3104'], error: ['#FBECEB', '#7A1A14'], ok: ['#D8EFE5', '#0B5C43'] }[tone]
-  return <View accessibilityRole={tone === 'error' ? 'alert' : undefined} style={[s.banner, { backgroundColor: t[0] }]}><Text style={[s.body, { color: t[1] }]}>{children}</Text></View>
+  return <View accessibilityRole={tone === 'error' ? 'alert' : undefined} accessibilityLiveRegion={tone === 'error' ? 'polite' : undefined} style={[s.banner, { backgroundColor: t[0] }]}><Text style={[s.body, { color: t[1] }]}>{children}</Text></View>
 }
 
 export const s = StyleSheet.create({

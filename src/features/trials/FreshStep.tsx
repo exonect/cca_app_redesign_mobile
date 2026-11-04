@@ -11,9 +11,11 @@ import { color, font, radius, TOUCH } from '@/ui/theme'
 
 import { RetentionChart } from './charts'
 import { num } from './format'
-import { freshForm, freshPayload, READING_MINUTES, requirementTargets, SLUMP_TOLERANCE, type FreshForm } from './forms'
+import { badNonNegative, freshForm, freshPayload, freshProblems, READING_MINUTES, requirementTargets, SLUMP_TOLERANCE, type FreshForm } from './forms'
 import { CellInput, Section, Segmented, StepActions, Verdict } from './parts'
 import { useStepForm, useWorkspace } from './workspace'
+
+const SHOWN = ['fresh_readings', 'fresh_density', 'bleeding', 'setting'] as const
 
 /** Note beside a reading: loss from the initial reading, or the target verdict on the target row. */
 export function readingNote(minutes: string, value: number | null, initial: number | null, target: { minutes: number; mm: number } | null) {
@@ -26,7 +28,7 @@ export function readingNote(minutes: string, value: number | null, initial: numb
 
 export function FreshStep({ readOnly, banners }: { readOnly: boolean; banners: ReactNode }) {
   const { project, header } = useWorkspace()
-  const { form, setForm, errors } = useStepForm<FreshForm>('fresh', (t) => freshForm(t, project), freshPayload)
+  const { form, setForm, errors } = useStepForm<FreshForm>('fresh', (t) => freshForm(t, project), freshPayload, freshProblems, SHOWN)
   const bleeding = useLookups('bleeding')
   const setting = useLookups('setting')
 
@@ -74,14 +76,14 @@ export function FreshStep({ readOnly, banners }: { readOnly: boolean; banners: R
               <View style={{ width: 104, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                 <CellInput style={{ flex: 1 }} keyboardType="number-pad" inputMode="numeric"
                   accessibilityLabel={`${label} at ${m === '0' ? 'batching' : `${m} minutes`} in millimetres${hit && target ? `, target ${num(target.mm)} plus or minus ${SLUMP_TOLERANCE}` : ''}`}
-                  value={form.readings[m]} editable={!readOnly} invalid={(v ?? 0) < 0} onChangeText={(x) => setReading(m, x)} />
+                  value={form.readings[m]} editable={!readOnly} invalid={badNonNegative(form.readings[m])} onChangeText={(x) => setReading(m, x)} />
                 <Text style={{ fontFamily: font.regular, fontSize: 13, color: color.muted }}>mm</Text>
               </View>
               <Text style={{ width: 90, textAlign: 'right', fontFamily: hit && note ? font.bold : font.regular, fontSize: 13, color: hit && note ? (within ? color.met.fg : color.below.fg) : color.muted }}>{note}</Text>
             </View>
           )
         })}
-        {errors.fresh_readings ? <Text style={{ paddingHorizontal: 16, paddingTop: 8, fontFamily: font.regular, fontSize: 13, color: color.error }}>{errors.fresh_readings}</Text> : null}
+        {errors.fresh_readings ? <Text accessibilityLiveRegion="polite" style={{ paddingHorizontal: 16, paddingTop: 8, fontFamily: font.regular, fontSize: 13, color: color.error }}>{errors.fresh_readings}</Text> : null}
         <View style={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 12, borderTopWidth: 1, borderColor: color.divider, gap: 6 }}>
           {within !== null && target ? (
             <Verdict ok={within}>{num(atValue)} mm at {target.hours} h, {within ? 'within' : 'outside'} {num(target.mm)} ± {SLUMP_TOLERANCE}</Verdict>
@@ -97,17 +99,17 @@ export function FreshStep({ readOnly, banners }: { readOnly: boolean; banners: R
             value={form.fresh_density} editable={!readOnly} invalid={!!errors.fresh_density}
             onChangeText={(v) => set('fresh_density', v)} style={{ textAlign: 'right' }} />
         </Field>
-        <RadioLookup legend="Bleeding" options={bleeding.data ?? []} value={form.bleeding} disabled={readOnly}
+        <RadioLookup legend="Bleeding" options={bleeding.data ?? []} value={form.bleeding} disabled={readOnly} failed={bleeding.isError}
           onChange={(v) => set('bleeding', v)} error={errors.bleeding} />
-        <RadioLookup legend="Setting" options={setting.data ?? []} value={form.setting} disabled={readOnly}
+        <RadioLookup legend="Setting" options={setting.data ?? []} value={form.setting} disabled={readOnly} failed={setting.isError}
           onChange={(v) => set('setting', v)} error={errors.setting} />
       </Section>
     </Screen>
   )
 }
 
-function RadioLookup({ legend, options, value, onChange, disabled, error }: {
-  legend: string; options: { id: number; value: string }[]; value: string; onChange: (v: string) => void; disabled?: boolean; error?: string
+function RadioLookup({ legend, options, value, onChange, disabled, error, failed }: {
+  legend: string; options: { id: number; value: string }[]; value: string; onChange: (v: string) => void; disabled?: boolean; error?: string; failed?: boolean
 }) {
   return (
     <View accessibilityRole="radiogroup" accessibilityLabel={legend} style={{ gap: 6 }}>
@@ -123,7 +125,7 @@ function RadioLookup({ legend, options, value, onChange, disabled, error }: {
             </Pressable>
           )
         })}
-        {options.length === 0 ? <Small>No values yet. An Admin can add them in Master data.</Small> : null}
+        {options.length === 0 ? <Small>{failed ? 'This list could not be loaded. Go back and open the trial again.' : 'No values yet. An Admin can add them in Master data.'}</Small> : null}
       </View>
       {error ? <Text accessibilityLiveRegion="polite" style={{ fontFamily: font.regular, fontSize: 13, color: color.error }}>{error}</Text> : null}
     </View>

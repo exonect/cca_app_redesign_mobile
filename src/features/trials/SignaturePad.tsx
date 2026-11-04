@@ -11,8 +11,10 @@ import { Image, PanResponder, Text, View, findNodeHandle } from 'react-native'
 import Svg, { Path } from 'react-native-svg'
 import { captureRef } from 'react-native-view-shot'
 
-import { Button, Small } from '@/ui/kit'
+import { Button } from '@/ui/kit'
 import { color, font, radius } from '@/ui/theme'
+
+import { SIGNATURE_MAX_CHARS } from './forms'
 
 const WIDTH = 360
 const HEIGHT = 140
@@ -47,7 +49,13 @@ export function SignaturePad({ label, value, onChange, disabled, onDrawing }: {
       const node = findNodeHandle(pad.current)
       if (!node) throw new Error('no view')
       const b64 = await captureRef(node, { format: 'png', result: 'base64', width: WIDTH, height: HEIGHT, quality: 1 })
-      latest.current.onChange(`data:image/png;base64,${b64.replace(/\s/g, '')}`)
+      const uri = `data:image/png;base64,${b64.replace(/\s/g, '')}`
+      // Same limit as the server, so a save never fails on an oversized image.
+      if (uri.length > SIGNATURE_MAX_CHARS) {
+        setProblem('This signature image is too large. Clear it and sign again.')
+        return
+      }
+      latest.current.onChange(uri)
       setProblem(null)
     } catch {
       setProblem('The signature could not be saved. Clear it and sign again.')
@@ -114,7 +122,7 @@ export function SignaturePad({ label, value, onChange, disabled, onDrawing }: {
           </View>
         )}
       </View>
-      {problem ? <Small style={{ color: color.error }}>{problem}</Small> : null}
+      {problem ? <Text accessibilityLiveRegion="polite" style={{ fontFamily: font.regular, fontSize: 13, color: color.error }}>{problem}</Text> : null}
       {!disabled && (value || inked) ? (
         <Button title="Clear signature" variant="tertiary" accessibilityLabel={`Clear signature of ${label}`} onPress={clear} style={{ alignSelf: 'flex-start', flexGrow: 0, paddingHorizontal: 0 }} />
       ) : null}
