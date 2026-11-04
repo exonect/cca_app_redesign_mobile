@@ -26,6 +26,7 @@ export function MoreScreen() {
 
   const work: { title: string; meta?: string; href: Href }[] = [
     { title: 'Projects', meta: hasRole('CT') ? 'Assigned to you' : undefined, href: '/projects' },
+    { title: 'Trials', meta: 'All trials you can see', href: '/trial' },
     { title: 'Product search', meta: 'Past trials by product', href: '/search' },
   ]
   if (hasRole('AD', 'SAD', 'CT')) work.push({ title: 'Recipe master', meta: hasRole('CT') ? 'Your recipes' : 'All locations', href: '/recipes' })

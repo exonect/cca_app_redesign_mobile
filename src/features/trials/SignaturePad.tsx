@@ -38,13 +38,16 @@ export function SignaturePad({ label, value, onChange, disabled, onDrawing }: {
   const [, redraw] = useState(0)
   const [problem, setProblem] = useState<string | null>(null)
   const size = useRef({ w: WIDTH, h: HEIGHT })
+  // The responder is built once; it reads the latest callbacks through refs.
+  const latest = useRef({ onChange, onDrawing })
+  latest.current = { onChange, onDrawing }
 
   async function capture() {
     try {
       const node = findNodeHandle(pad.current)
       if (!node) throw new Error('no view')
       const b64 = await captureRef(node, { format: 'png', result: 'base64', width: WIDTH, height: HEIGHT, quality: 1 })
-      onChange(`data:image/png;base64,${b64.replace(/\s/g, '')}`)
+      latest.current.onChange(`data:image/png;base64,${b64.replace(/\s/g, '')}`)
       setProblem(null)
     } catch {
       setProblem('The signature could not be saved. Clear it and sign again.')
@@ -56,7 +59,7 @@ export function SignaturePad({ label, value, onChange, disabled, onDrawing }: {
     onMoveShouldSetPanResponder: () => !disabled,
     onPanResponderTerminationRequest: () => false,
     onPanResponderGrant: (e) => {
-      onDrawing?.(true)
+      latest.current.onDrawing?.(true)
       current.current = [[e.nativeEvent.locationX, e.nativeEvent.locationY]]
       redraw((x) => x + 1)
     },
@@ -67,16 +70,16 @@ export function SignaturePad({ label, value, onChange, disabled, onDrawing }: {
       redraw((v) => v + 1)
     },
     onPanResponderRelease: () => {
-      onDrawing?.(false)
+      latest.current.onDrawing?.(false)
       const done = current.current
       current.current = []
       if (done.length) {
         setStrokes((s) => [...s, done])
-        // Capture after the finished stroke is on screen.
-        requestAnimationFrame(() => { capture() })
+        // Capture once the finished stroke has been drawn on screen.
+        setTimeout(() => { capture() }, 60)
       }
     },
-    onPanResponderTerminate: () => { onDrawing?.(false) },
+    onPanResponderTerminate: () => { latest.current.onDrawing?.(false) },
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }), [disabled])
 

@@ -98,7 +98,7 @@ describe('cube strength', () => {
     serve(makeTrial(), (path, opts) => (opts?.method === 'PUT' ? saved : undefined))
     await open(4)
     await fireEvent.changeText(await screen.findByLabelText('7 days, cube 1 load in kilonewtons'), '702')
-    await fireEvent.press(screen.getByRole('button', { name: 'Save 7 days results' }))
+    await fireEvent.press(screen.getByRole('button', { name: 'Save 7 day results' }))
     await waitFor(() => expect(mockApi).toHaveBeenCalledWith('/trials/t-1/cubes/7d/', {
       method: 'PUT', body: { cubes: [{ weight: null, load: '702' }, { weight: null, load: null }, { weight: null, load: null }] },
     }))

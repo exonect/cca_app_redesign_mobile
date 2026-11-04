@@ -109,7 +109,7 @@ export function CubesStep({ canEdit, banners }: { canEdit: boolean; banners: Rea
             ? (
               <>
                 <Button title="Next" accessibilityLabel="Next: conclusion" onPress={next} busy={savingAll} style={{ flex: 0.7 }} />
-                <Button variant="primary" title={`Save ${label} results`} disabled={!selDirty}
+                <Button variant="primary" title={`Save ${label.replace(/s$/, '')} results`} disabled={!selDirty}
                   busy={m.isPending && m.variables?.age === selected} onPress={() => saveAge(selected)} style={{ flex: 1.3 }} />
               </>
             )
