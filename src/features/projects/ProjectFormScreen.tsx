@@ -15,8 +15,9 @@ import { color, font, radius, TOUCH } from '@/ui/theme'
 import { invalidateProject, storeProject, useProject, useSalesPersons } from './api'
 import { num } from './format'
 import {
-  CATEGORY, EMPTY, fromProject, isFormField, LABELS, missingStep1, PRICE_MESSAGE, priceMissing, stepForErrors, STEP1_FIELDS,
-  toPayload, validate, withCurrent, type FkField, type FormErrors, type FormField, type M2mField, type ProjectFormValues,
+  CATEGORY, cementitiousProblem, EMPTY, fromProject, isFormField, LABELS, missingStep1, PRICE_MESSAGE, priceMissing, REMARKS_MAX,
+  requiredAfterDraft, stepForErrors, STEP1_FIELDS, toPayload, validate, withCurrent, withPendingCementitious, type FkField,
+  type FormErrors, type FormField, type M2mField, type ProjectFormValues,
 } from './formModel'
 import { goBack } from './TabHeader'
 
@@ -73,7 +74,10 @@ export function ProjectForm({ project }: { project: Project | null }) {
   const [savedId, setSavedId] = useState<string | null>(project?.id ?? null)
   const [values, setValues] = useState<ProjectFormValues>(project ? fromProject(project) : { ...EMPTY })
   const [saved, setSaved] = useState<ProjectFormValues>(values)
-  const dirty = JSON.stringify(values) !== JSON.stringify(saved)
+  // Cementitious value typed but not yet added with Add: kept here so it survives
+  // switching steps, counts as unsaved, and is added (or flagged) on save.
+  const [cemText, setCemText] = useState('')
+  const dirty = JSON.stringify(values) !== JSON.stringify(saved) || cemText.trim() !== ''
   const [errors, setErrors] = useState<FormErrors>({})
   const [banner, setBanner] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
@@ -112,8 +116,8 @@ export function ProjectForm({ project }: { project: Project | null }) {
   })
   const leaveTo = (id: string) => { allowLeave(); router.replace(`/project/${id}`) }
 
-  const save = async (): Promise<Project> => {
-    const body = toPayload(values, picksSalesPerson)
+  const save = async (v: ProjectFormValues): Promise<Project> => {
+    const body = toPayload(v, picksSalesPerson)
     const p = savedId
       ? await api<Project>(`/projects/${savedId}/`, { method: 'PATCH', body })
       : await api<Project>('/projects/', { method: 'POST', body })
@@ -123,22 +127,22 @@ export function ProjectForm({ project }: { project: Project | null }) {
   }
 
   const saveDraft = useMutation({
-    mutationFn: save,
+    mutationFn: (v: ProjectFormValues) => save(v),
     onSuccess: (p) => { setNotice('Draft saved'); const v = fromProject(p); setValues(v); setSaved(v) },
     onError: showServerErrors,
   })
   const create = useMutation({
-    mutationFn: async () => {
-      const p = await save()
+    mutationFn: async (v: ProjectFormValues) => {
+      const p = await save(v)
       // Saved as a draft even if submitting fails, so nothing typed is lost.
-      setSaved(values)
+      setSaved(v)
       return api<Project>(`/projects/${p.id}/submit/`, { method: 'POST' })
     },
     onSuccess: (p) => { storeProject(qc, p); leaveTo(p.id) },
     onError: showServerErrors,
   })
   const saveChanges = useMutation({
-    mutationFn: save,
+    mutationFn: (v: ProjectFormValues) => save(v),
     onSuccess: (p) => leaveTo(p.id),
     onError: showServerErrors,
   })
@@ -151,11 +155,21 @@ export function ProjectForm({ project }: { project: Project | null }) {
     else top()
   }
 
+  /** The values to save, with a typed but not added cementitious value added; null (and the error shown) when it is not valid. */
+  const takePending = (): ProjectFormValues | null => {
+    const r = withPendingCementitious(values, cemText)
+    if (r.error) { fail({ ...validate(values), cementitious_contents: r.error }); return null }
+    if (r.values !== values) { setValues(r.values); setCemText('') }
+    return r.values
+  }
+
   const onSaveDraft = () => {
     setBanner(null)
-    const e = validate(values)
+    const v = takePending()
+    if (!v) return
+    const e = validate(v)
     if (Object.keys(e).length) fail(e)
-    else saveDraft.mutate()
+    else saveDraft.mutate(v)
   }
   const onContinue = () => {
     setBanner(null)
@@ -166,16 +180,21 @@ export function ProjectForm({ project }: { project: Project | null }) {
   }
   const onCreate = () => {
     setBanner(null)
-    const e = validate(values)
-    if (priceMissing(values)) e.selling_basic_price ??= PRICE_MESSAGE
+    const v = takePending()
+    if (!v) return
+    const e = validate(v)
+    if (priceMissing(v)) e.selling_basic_price ??= PRICE_MESSAGE
     if (Object.keys(e).length) fail(e)
-    else create.mutate()
+    else create.mutate(v)
   }
   const onSaveChanges = () => {
     setBanner(null)
-    const e = validate(values) // like the server, edits check formats only
+    const v = takePending()
+    if (!v) return
+    // Like the server: formats always; past draft, what submit required must stay filled in.
+    const e = { ...(isDraft ? {} : requiredAfterDraft(v, picksSalesPerson)), ...validate(v) }
     if (Object.keys(e).length) fail(e)
-    else saveChanges.mutate()
+    else saveChanges.mutate(v)
   }
 
   const all = (Object.keys(errors) as FormField[]).filter((f) => errors[f])
@@ -223,7 +242,7 @@ export function ProjectForm({ project }: { project: Project | null }) {
 
         {step === 1
           ? <CustomerStep v={values} e={errors} set={set} project={project} picksSalesPerson={picksSalesPerson} ownName={project?.sales_person?.name ?? user?.full_name ?? ''} />
-          : <TechnicalStep v={values} e={errors} set={set} project={project} />}
+          : <TechnicalStep v={values} e={errors} set={set} project={project} cemText={cemText} setCemText={setCemText} />}
 
         {step === 1 && isDraft ? (
           <Small>Save draft keeps what you have entered, even with fields missing. The project becomes Created, and Sales Admins are notified, only when step 2 is complete and every field passes.</Small>
@@ -332,13 +351,13 @@ function CustomerStep(p: StepProps & { picksSalesPerson: boolean; ownName: strin
         <LookupPicker {...p} name="city" label="City" parent={v.region ? Number(v.region) : null}
           placeholder={v.region ? 'Choose' : 'Choose a region first'}
           hint={regionName ? `Cities in ${regionName}. Changing region clears this.` : undefined} />
-        <Text_ {...p} f="remarks" label="Remarks" hint="Anything the CT should know before the first trial" multiline style={{ minHeight: 80, textAlignVertical: 'top' }} />
+        <Text_ {...p} f="remarks" label="Remarks" hint={`Anything the CT should know before the first trial. Up to ${REMARKS_MAX} characters.`} maxLength={REMARKS_MAX} multiline style={{ minHeight: 80, textAlignVertical: 'top' }} />
       </Section>
     </>
   )
 }
 
-function TechnicalStep(p: StepProps) {
+function TechnicalStep({ cemText, setCemText, ...p }: StepProps & { cemText: string; setCemText: (t: string) => void }) {
   const { v, e, set, project } = p
   const slumps = useLookups('slump_flow')
   const retention = useLookups('retention_time')
@@ -356,7 +375,8 @@ function TechnicalStep(p: StepProps) {
         <LookupChips {...p} name="grades_of_concrete" label="Grade of concrete" />
         <LookupChips {...p} name="wc_ratios_ssd" label="W/C ratio, SSD" />
         <LookupPicker {...p} name="wc_ratio_corrected" label="W/C ratio, corrected" />
-        <CementitiousInput value={v.cementitious_contents} onChange={(x) => set('cementitious_contents', x)} error={e.cementitious_contents} />
+        <CementitiousInput value={v.cementitious_contents} onChange={(x) => set('cementitious_contents', x)} error={e.cementitious_contents}
+          text={cemText} onText={setCemText} />
       </Section>
       <Section title="Workability and strength">
         <Field label="Requirement type" error={e.requirement_type}>
@@ -402,15 +422,17 @@ function TechnicalStep(p: StepProps) {
   )
 }
 
-export function CementitiousInput({ value, onChange, error }: { value: number[]; onChange: (v: number[]) => void; error?: string }) {
-  const [text, setText] = useState('')
+export function CementitiousInput({ value, onChange, error, text: shared, onText }: {
+  value: number[]; onChange: (v: number[]) => void; error?: string; text?: string; onText?: (t: string) => void
+}) {
+  const [own, setOwn] = useState('')
+  const text = shared ?? own
+  const setText = onText ?? setOwn
   const [local, setLocal] = useState<string | null>(null)
   const add = () => {
-    const t = text.trim()
-    if (!/^\d+$/.test(t) || Number(t) < 100 || Number(t) > 999) { setLocal('Enter a whole number from 100 to 999 kg/m³.'); return }
-    const n = Number(t)
-    if (value.includes(n)) { setLocal(`${n} kg/m³ is already in the list.`); return }
-    onChange([...value, n].sort((a, b) => a - b))
+    const problem = cementitiousProblem(text, value)
+    if (problem) { setLocal(problem); return }
+    onChange([...value, Number(text.trim())].sort((a, b) => a - b))
     setText('')
     setLocal(null)
   }
@@ -430,7 +452,7 @@ export function CementitiousInput({ value, onChange, error }: { value: number[];
       <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
         <View style={{ flex: 1 }}>
           <TextField accessibilityLabel="Cementitious content to add, kg per cubic metre" placeholder="e.g. 440" keyboardType="number-pad"
-            invalid={Boolean(message)} value={text} onChangeText={setText} onSubmitEditing={add} returnKeyType="done" />
+            invalid={Boolean(message)} value={text} onChangeText={(t) => { setText(t); setLocal(null) }} onSubmitEditing={add} returnKeyType="done" />
         </View>
         <Button title="Add" onPress={add} style={{ flexGrow: 0 }} />
       </View>

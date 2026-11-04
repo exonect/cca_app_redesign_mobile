@@ -1,4 +1,6 @@
-import { EMPTY, missingStep1, priceMissing, stepForErrors, toPayload, validate } from './formModel'
+import {
+  cementitiousProblem, EMPTY, missingStep1, priceMissing, requiredAfterDraft, stepForErrors, toPayload, validate, withPendingCementitious,
+} from './formModel'
 
 describe('project form model', () => {
   it('opens the step that holds the first server error', () => {
@@ -37,5 +39,41 @@ describe('project form model', () => {
     expect(validate({ ...EMPTY, potential_cr: '12345678.99', selling_basic_price: '1234567890.5' })).toEqual({})
     expect(validate({ ...EMPTY, bulk_and_barrel: '12345678901' }).bulk_and_barrel).toMatch('at most 10 digits')
     expect(validate({ ...EMPTY, potential_cr: '-1' }).potential_cr).toMatch('0 or more')
+  })
+})
+
+describe('final server rules for projects', () => {
+  it('limits remarks to 2000 characters after trimming', () => {
+    expect(validate({ ...EMPTY, remarks: 'x'.repeat(2001) }).remarks).toBe('Use 2000 characters or fewer.')
+    expect(validate({ ...EMPTY, remarks: ` ${'x'.repeat(2000)} ` })).toEqual({})
+  })
+
+  it('allows up to 10 cementitious contents, each once', () => {
+    const ten = Array.from({ length: 10 }, (_, i) => 300 + i * 10)
+    expect(validate({ ...EMPTY, cementitious_contents: ten })).toEqual({})
+    expect(validate({ ...EMPTY, cementitious_contents: [...ten, 500] }).cementitious_contents).toBe('Enter up to 10 cementitious contents.')
+    expect(validate({ ...EMPTY, cementitious_contents: [420, 420] }).cementitious_contents).toBe('Each cementitious content can be entered once.')
+    expect(cementitiousProblem('430', ten)).toBe('Enter up to 10 cementitious contents.')
+    expect(cementitiousProblem('420', [420])).toBe('420 kg/m³ is already in the list.')
+    expect(cementitiousProblem('42.5', [])).toBe('Enter a whole number from 100 to 999 kg/m³.')
+  })
+
+  it('adds a typed but not added cementitious value on save, or says what to fix', () => {
+    expect(withPendingCementitious({ ...EMPTY, cementitious_contents: [450] }, ' 420 ').values.cementitious_contents).toEqual([420, 450])
+    expect(withPendingCementitious(EMPTY, '').values).toBe(EMPTY)
+    const bad = withPendingCementitious({ ...EMPTY, cementitious_contents: [420] }, '420')
+    expect(bad.error).toBe('420 kg/m³ is already in the list. Fix or clear the value you typed, then save again.')
+    expect(bad.values.cementitious_contents).toEqual([420])
+  })
+
+  it('keeps fields required on submit filled once past draft', () => {
+    const e = requiredAfterDraft({ ...EMPTY, customer_name: 'Mula' }, false)
+    expect(e.customer_name).toBeUndefined()
+    expect(e.project_name).toBe('Project name is required once the project is created.')
+    expect(e.cement_brands).toBe('Cement brands is required once the project is created.')
+    expect(e.selling_basic_price).toBe('Enter a bulk or barrel basic selling price above zero.')
+    expect(e.sales_person).toBeUndefined() // set by the server for a Sales Person
+    expect(e.admixture_base).toBeUndefined() // optional
+    expect(requiredAfterDraft(EMPTY, true).sales_person).toBe('Sales Person is required once the project is created.')
   })
 })

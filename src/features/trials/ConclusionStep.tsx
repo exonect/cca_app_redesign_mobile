@@ -14,15 +14,15 @@ import type { Outcome, Trial } from '@/shared/types'
 import { Banner, Button, Field, OutcomeChip, Screen, Small, TextField } from '@/ui/kit'
 import { color, font, radius, TOUCH } from '@/ui/theme'
 
-import { attachmentForm, attachmentProblem, extOf, MIME, photoName, type PickedFile } from './attachments'
+import { attachmentForm, extOf, MIME, photoName, planUploads, type PickedFile } from './attachments'
 import { downloadAndShare } from './download'
 import { date, fileSize, shortDate } from './format'
-import { conclusionForm, conclusionPayload, conclusionProblems, SIGNATORIES, SIGNATORY_MAX, splitWarnings, type ConclusionForm } from './forms'
+import { conclusionForm, conclusionPayload, conclusionProblems, LIMITS, SIGNATORIES, SIGNATORY_MAX, splitWarnings, type ConclusionForm } from './forms'
 import { RadioCard, Section, StepFooter } from './parts'
 import { SignaturePad } from './SignaturePad'
 import { useReloadTrial, useStepForm, useWorkspace } from './workspace'
 
-const REMARKS_MAX = 1000
+const REMARKS_MAX = LIMITS.remarks
 const SHOWN = ['remarks', ...SIGNATORIES.flatMap((s) => [s.name, s.sign])]
 
 export function ConclusionStep({ readOnly, banners }: { readOnly: boolean; banners: ReactNode }) {
@@ -201,9 +201,8 @@ function Attachments() {
 
   async function upload(files: PickedFile[]) {
     if (!files.length) return
-    const bad = files.map(attachmentProblem).filter((x): x is string => !!x)
-    setProblems(bad)
-    const good = files.filter((f) => !attachmentProblem(f))
+    const { upload: good, problems: skipped } = planUploads(files, trial.attachments.length)
+    setProblems(skipped)
     setUploading(good.length)
     let ok = 0
     for (const f of good) {
@@ -310,7 +309,7 @@ function Attachments() {
           <IconButton label="Choose file" icon="file" onPress={chooseFile} disabled={uploading > 0} />
         </View>
       )}
-      {canAttach ? <Small>PDF, JPG, PNG, XLSX or MP4, up to 25 MB each.</Small> : null}
+      {canAttach ? <Small>PDF, JPG, PNG, XLSX or MP4, up to 25 MB each and 30 files per trial.</Small> : null}
     </Section>
   )
 }

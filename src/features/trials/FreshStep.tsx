@@ -11,7 +11,7 @@ import { color, font, radius, TOUCH } from '@/ui/theme'
 
 import { RetentionChart } from './charts'
 import { num } from './format'
-import { badNonNegative, freshForm, freshPayload, freshProblems, READING_MINUTES, requirementTargets, SLUMP_TOLERANCE, type FreshForm } from './forms'
+import { freshForm, LIMITS, outOfRange, freshPayload, freshProblems, READING_MINUTES, requirementTargets, SLUMP_TOLERANCE, type FreshForm } from './forms'
 import { CellInput, Section, Segmented, StepActions, Verdict } from './parts'
 import { useStepForm, useWorkspace } from './workspace'
 
@@ -76,7 +76,7 @@ export function FreshStep({ readOnly, banners }: { readOnly: boolean; banners: R
               <View style={{ width: 104, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                 <CellInput style={{ flex: 1 }} keyboardType="number-pad" inputMode="numeric"
                   accessibilityLabel={`${label} at ${m === '0' ? 'batching' : `${m} minutes`} in millimetres${hit && target ? `, target ${num(target.mm)} plus or minus ${SLUMP_TOLERANCE}` : ''}`}
-                  value={form.readings[m]} editable={!readOnly} invalid={badNonNegative(form.readings[m])} onChangeText={(x) => setReading(m, x)} />
+                  value={form.readings[m]} editable={!readOnly} invalid={outOfRange(form.readings[m], LIMITS.reading)} onChangeText={(x) => setReading(m, x)} />
                 <Text style={{ fontFamily: font.regular, fontSize: 13, color: color.muted }}>mm</Text>
               </View>
               <Text style={{ width: 90, textAlign: 'right', fontFamily: hit && note ? font.bold : font.regular, fontSize: 13, color: hit && note ? (within ? color.met.fg : color.below.fg) : color.muted }}>{note}</Text>

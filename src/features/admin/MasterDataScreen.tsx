@@ -97,6 +97,9 @@ export function MasterDataScreen() {
 }
 
 export const VALUE_MAX = 200
+/** Numeric lists take plain numbers only: up to 6 digits, optionally a point and 1 to 4 decimals (server NUMERIC_VALUE). */
+export const NUMERIC_VALUE = /^\d{1,6}(\.\d{1,4})?$/
+export const NUMERIC_MESSAGE = 'This list only accepts numbers of 0 or more, like 160 or 0.38 (up to 6 digits before the point and 4 after).'
 
 /** Mirrors the server: spaces trimmed and collapsed, not blank, up to 200
  * characters, and numbers only for the numeric lists. */
@@ -104,7 +107,7 @@ export function lookupValueProblem(raw: string, numeric: boolean): string | null
   const v = raw.split(/\s+/).filter(Boolean).join(' ')
   if (!v) return 'Enter a value.'
   if (v.length > VALUE_MAX) return `Use ${VALUE_MAX} characters or fewer.`
-  if (numeric && !/^-?(\d+(\.\d*)?|\.\d+)$/.test(v)) return 'This list only accepts numbers.'
+  if (numeric && !NUMERIC_VALUE.test(v)) return NUMERIC_MESSAGE
   return null
 }
 

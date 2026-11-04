@@ -47,7 +47,23 @@ export const CAST_ERRORS = {
   timeFormat: 'Enter the time as hh:mm in 24 hour format, for example 14:30.',
   needTime: 'Enter the time as well as the date.',
   needDate: 'Enter the date as well as the time.',
+  future: 'The trial date cannot be in the future.',
+  cleared: 'The trial date and time is needed once the trial has started.',
 } as const
+
+/** Today in IST as yyyy-mm-dd. */
+export function istToday(now = new Date()) {
+  const n = new Date(now.getTime() + IST_MS)
+  return `${n.getUTCFullYear()}-${pad(n.getUTCMonth() + 1)}-${pad(n.getUTCDate())}`
+}
+
+/** True when the typed date (dd/mm/yyyy) is after today in IST. The server
+ * compares days only, so a later time today is fine. */
+export function isFutureDay(date: string, now = new Date()) {
+  const d = parseDate(date)
+  if (typeof d !== 'object') return false
+  return `${d.y}-${pad(d.m)}-${pad(d.d)}` > istToday(now)
+}
 
 /**
  * Typed date and time -> ISO string with +05:30 (what the API stores), or

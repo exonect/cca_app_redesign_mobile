@@ -1,7 +1,7 @@
 /** Step 2, mix design: trial date and time, grade, batch size, product and
  * dosage, free W/C (read only), and the materials as an accordion whose
  * open row shows SSD, absorption, moisture, correction and adjusted. */
-import { useState, type ReactNode } from 'react'
+import { useCallback, useState, type ReactNode } from 'react'
 import { Pressable, Text, View } from 'react-native'
 import Svg, { Polyline } from 'react-native-svg'
 
@@ -13,7 +13,7 @@ import { color, font, TOUCH } from '@/ui/theme'
 
 import { CastAtField } from './CastAtField'
 import { num } from './format'
-import { badNonNegative, isNumberText, mixForm, mixPayload, mixProblems, type MaterialEntry, type MixForm } from './forms'
+import { LIMITS, mixForm, mixPayload, mixProblems, outOfRange, type MaterialEntry, type MixForm } from './forms'
 import { CellInput, cell, Output, Section, SourceNote, StepActions, TableHead, TickIcon, WarnIcon } from './parts'
 import { useStepForm, useWorkspace } from './workspace'
 
@@ -46,7 +46,9 @@ const SHOWN = ['cast_at', 'grade_of_concrete', 'admixture_1', 'dosage_1', 'batch
 
 export function MixStep({ readOnly, banners }: { readOnly: boolean; banners: ReactNode }) {
   const { trial, project, header, castError, setCastError } = useWorkspace()
-  const { form, setForm, errors, dirty } = useStepForm<MixForm>('mix', mixForm, mixPayload, mixProblems, SHOWN)
+  const status = trial.status
+  const problems = useCallback((f: MixForm) => mixProblems(f, status), [status])
+  const { form, setForm, errors, dirty } = useStepForm<MixForm>('mix', mixForm, mixPayload, problems, SHOWN)
   const [open, setOpen] = useState<string | null>(null)
   const [second, setSecond] = useState(() => !!trial.admixture_2)
   const products = useProducts()
@@ -203,17 +205,17 @@ export function MixStep({ readOnly, banners }: { readOnly: boolean; banners: Rea
                     <View style={{ flexDirection: 'row', gap: 8 }}>
                       <Labeled label="SSD design, kg">
                         <CellInput accessibilityLabel={`${MATERIAL_LABEL[m]} SSD design, kilograms per cubic metre`} value={entry.ssd} editable={!readOnly}
-                          invalid={badNonNegative(entry.ssd)} onChangeText={(v) => setMat(m, 'ssd', v)} />
+                          invalid={outOfRange(entry.ssd, LIMITS.ssd)} onChangeText={(v) => setMat(m, 'ssd', v)} />
                       </Labeled>
                       {agg && (
                         <>
                           <Labeled label="Absorption, %">
                             <CellInput accessibilityLabel={`${MATERIAL_LABEL[m]} absorption, percent`} value={entry.absorption} editable={!readOnly}
-                              invalid={!isNumberText(entry.absorption)} onChangeText={(v) => setMat(m, 'absorption', v)} />
+                              invalid={outOfRange(entry.absorption, LIMITS.percent)} onChangeText={(v) => setMat(m, 'absorption', v)} />
                           </Labeled>
                           <Labeled label="Moisture, %">
                             <CellInput accessibilityLabel={`${MATERIAL_LABEL[m]} moisture, percent`} value={entry.moisture} editable={!readOnly}
-                              invalid={!isNumberText(entry.moisture)} onChangeText={(v) => setMat(m, 'moisture', v)} />
+                              invalid={outOfRange(entry.moisture, LIMITS.percent)} onChangeText={(v) => setMat(m, 'moisture', v)} />
                           </Labeled>
                         </>
                       )}

@@ -6,7 +6,8 @@ import { ActivityIndicator, Pressable, SectionList, Text, View } from 'react-nat
 import { useUnreadCount } from '@/api/hooks'
 import { api } from '@/api/client'
 import type { Notification } from '@/shared/types'
-import { Button, EmptyState, ErrorState, H2, Loading, Small } from '@/ui/kit'
+import { errorMessage } from '@/api/errors'
+import { Banner, Button, EmptyState, ErrorState, H2, Loading, Small } from '@/ui/kit'
 import { color, font, radius } from '@/ui/theme'
 
 import { usePaged } from '@/features/projects/api'
@@ -28,6 +29,7 @@ export function AlertsScreen() {
   const { refreshing, onRefresh } = useRefresh(() => Promise.all([list.refetch(), qc.invalidateQueries({ queryKey: ['notifications', 'unread-count'] })]))
 
   const readOne = useMutation({ mutationFn: (id: number) => api(`/notifications/${id}/read/`, { method: 'POST' }), onSuccess: refresh })
+  const readOneFailed = readOne.isError ? list.items.find((n) => n.id === readOne.variables) : undefined
   const readAll = useMutation({ mutationFn: () => api('/notifications/read-all/', { method: 'POST' }), onSuccess: refresh })
 
   const today = istDay(new Date())
@@ -57,7 +59,16 @@ export function AlertsScreen() {
         stickySectionHeadersEnabled={false}
         onEndReachedThreshold={0.4}
         onEndReached={() => { if (list.hasNextPage && !list.isFetchingNextPage) void list.fetchNextPage() }}
-        ListHeaderComponent={readAll.isError ? <ErrorState error={readAll.error} /> : undefined}
+        ListHeaderComponent={readAll.isError || readOne.isError ? (
+          <View style={{ gap: 8, paddingBottom: 12 }}>
+            {readAll.isError ? <ErrorState error={readAll.error} /> : null}
+            {readOne.isError ? (
+              <View accessibilityRole="alert" accessibilityLiveRegion="polite">
+                <Banner tone="error">{readOneError(readOne.error, readOneFailed?.title)}</Banner>
+              </View>
+            ) : null}
+          </View>
+        ) : undefined}
         renderSectionHeader={({ section }) => (
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingTop: section.top ? 0 : 16, paddingBottom: 8 }}>
             <H2>{section.title}</H2>
@@ -79,6 +90,12 @@ export function AlertsScreen() {
       />
     </View>
   )
+}
+
+/** Shown when marking one alert as read fails (the alert still opens). */
+export function readOneError(error: unknown, title?: string) {
+  const what = title ? `"${title}" could not be marked as read.` : 'This alert could not be marked as read.'
+  return `${what} ${errorMessage(error)}`
 }
 
 function AlertRow({ n, onPress, first, last, sameDay }: { n: Notification; onPress: () => void; first: boolean; last: boolean; sameDay: boolean }) {

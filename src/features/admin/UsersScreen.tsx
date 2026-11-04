@@ -157,6 +157,9 @@ const FIELDS = Object.keys(schema.shape) as Key[]
 
 function UserSheet({ user, onClose, onDone }: { user: User | 'new' | null; onClose: () => void; onDone: (msg: string) => void }) {
   const existing = user && user !== 'new' ? user : null
+  const { user: me } = useAuth()
+  // The server refuses an Admin changing their own role or deactivating themselves.
+  const isSelf = !!existing && existing.id === me?.id
   const qc = useQueryClient()
   const regions = useLookups('region')
   const managers = useQuery({
@@ -174,7 +177,8 @@ function UserSheet({ user, onClose, onDone }: { user: User | 'new' | null; onClo
 
   const save = useMutation({
     mutationFn: (f: Form) => {
-      const body = { ...f, region: f.region ? Number(f.region) : null, manager: f.manager ? Number(f.manager) : null }
+      const { role, ...rest } = f
+      const body = { ...rest, ...(isSelf ? {} : { role }), region: f.region ? Number(f.region) : null, manager: f.manager ? Number(f.manager) : null }
       return existing ? api<User>(`/users/${existing.id}/`, { method: 'PATCH', body }) : api<User>('/users/', { method: 'POST', body })
     },
     onSuccess: (u) => { void qc.invalidateQueries({ queryKey: ['users'] }); onDone(existing ? `${u.full_name} saved` : `${u.full_name} added`); onClose() },
@@ -221,7 +225,10 @@ function UserSheet({ user, onClose, onDone }: { user: User | 'new' | null; onClo
       <Field label="Employee ID" required error={errors.emp_id}>
         <TextField accessibilityLabel="Employee ID" autoCapitalize="characters" invalid={Boolean(errors.emp_id)} maxLength={20} value={v.emp_id} onChangeText={(t) => set('emp_id', t)} />
       </Field>
-      <Field label="Role" error={errors.role}>
+      <Field label="Role" error={errors.role} hint={isSelf ? 'You cannot change your own role. Ask another Admin.' : undefined}>
+        {isSelf ? (
+          <TextField accessibilityLabel="Role, cannot be changed on your own account" value={ROLE_LABEL[v.role]} editable={false} />
+        ) : (
         <View accessibilityRole="radiogroup" accessibilityLabel="Role" style={{ gap: 8 }}>
           {ROLE_ORDER.map((r) => {
             const on = v.role === r
@@ -239,6 +246,7 @@ function UserSheet({ user, onClose, onDone }: { user: User | 'new' | null; onClo
             )
           })}
         </View>
+        )}
       </Field>
       <Field label="Region" error={errors.region} hint="Leave empty for all regions.">
         <Picker label="Region" value={v.region || null} placeholder={regions.isLoading ? 'Loading…' : 'All regions'}

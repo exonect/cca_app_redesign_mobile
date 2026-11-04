@@ -57,6 +57,18 @@ const project = (over: Partial<Project> = {}): Project => ({
   ...over,
 })
 
+/** A project with everything submit requires, as it is once past draft. */
+const complete = (over: Partial<Project> = {}) => {
+  const ref = (id: number, value: string) => ({ id, value })
+  return project({
+    selling_basic_price: '52.00', cement_brands: [ref(11, 'UltraTech')], cement_grades: [ref(12, 'OPC 53')], mineral_admixtures: [ref(13, 'Fly ash')],
+    grades_of_concrete: [ref(14, 'M40')], wc_ratios_ssd: [ref(15, '0.38')], compressive_strengths: [ref(16, '48')], wc_ratio_corrected: ref(17, '0.40'),
+    cementitious_contents: [420], requirement_type: 'slump', retention_time: ref(18, '2'), slump_flow: ref(19, '160'), strength_age: ref(20, '28 days'),
+    sand_type: ref(21, 'Crushed'), fine_aggregate_source: ref(22, 'Local'), coarse_aggregate_source: ref(23, 'Local'), sand_zone: ref(24, 'Zone II'),
+    ...over,
+  })
+}
+
 beforeEach(() => {
   mockPush.mockReset(); mockReplace.mockReset(); mockApi.mockReset(); mockPreventRemove.mockClear(); mockAllowLeave.mockClear()
   mockApi.mockImplementation(async (path: string, opts?: { query?: Record<string, unknown> }) => {
@@ -113,7 +125,7 @@ describe('project form errors and leaving', () => {
   })
 
   it('guards leaving only while there are unsaved changes, and lets a successful save through', async () => {
-    const p = project({ status: 'created', status_label: 'Created' })
+    const p = complete({ status: 'created', status_label: 'Created' })
     const base = mockApi.getMockImplementation()!
     mockApi.mockImplementation(async (path: string, opts?: Parameters<typeof api>[1]) => {
       if (path === '/projects/p1/' && opts?.method === 'PATCH') return { ...p, project_name: 'Baner podium, phase 2' } as never
@@ -126,6 +138,45 @@ describe('project form errors and leaving', () => {
     await fireEvent.press(screen.getAllByRole('button', { name: 'Save changes' })[0])
     await waitFor(() => expect(mockReplace).toHaveBeenCalledWith('/project/p1'))
     expect(mockAllowLeave).toHaveBeenCalled()
+  })
+})
+
+describe('project form, final server rules', () => {
+  it('adds a typed but not added cementitious value when saving a draft', async () => {
+    const p = project()
+    const base = mockApi.getMockImplementation()!
+    mockApi.mockImplementation(async (path: string, opts?: Parameters<typeof api>[1]) => {
+      if (path === '/projects/p1/' && opts?.method === 'PATCH') return { ...p, cementitious_contents: [420] } as never
+      return base(path, opts)
+    })
+    await render(wrap(<ProjectForm project={p} />))
+    await fireEvent.press(screen.getByRole('button', { name: 'Continue' }))
+    await fireEvent.changeText(await screen.findByLabelText('Cementitious content to add, kg per cubic metre'), '420')
+    expect(mockPreventRemove.mock.calls.at(-1)?.[0]).toBe(true)
+    await fireEvent.press(screen.getByRole('button', { name: 'Save draft' }))
+    await waitFor(() => expect(mockApi).toHaveBeenCalledWith('/projects/p1/', expect.objectContaining({
+      method: 'PATCH', body: expect.objectContaining({ cementitious_contents: [420] }),
+    })))
+    expect(await screen.findByText('Draft saved')).toBeTruthy()
+  })
+
+  it('does not save a typed cementitious value that cannot be added', async () => {
+    const p = project({ cementitious_contents: [420] })
+    await render(wrap(<ProjectForm project={p} />))
+    await fireEvent.press(screen.getByRole('button', { name: 'Continue' }))
+    await fireEvent.changeText(await screen.findByLabelText('Cementitious content to add, kg per cubic metre'), '42')
+    await fireEvent.press(screen.getByRole('button', { name: 'Save draft' }))
+    expect(await screen.findByText('Enter a whole number from 100 to 999 kg/m³. Fix or clear the value you typed, then save again.')).toBeTruthy()
+    expect(mockApi).not.toHaveBeenCalledWith('/projects/p1/', expect.anything())
+  })
+
+  it('past draft, will not save a required field left blank', async () => {
+    const p = complete({ status: 'created', status_label: 'Created' })
+    await render(wrap(<ProjectForm project={p} />))
+    await fireEvent.changeText(screen.getByLabelText('Project name'), '  ')
+    await fireEvent.press(screen.getAllByRole('button', { name: 'Save changes' })[0])
+    expect(await screen.findByText('Project name is required once the project is created.')).toBeTruthy()
+    expect(mockApi).not.toHaveBeenCalledWith('/projects/p1/', expect.anything())
   })
 })
 

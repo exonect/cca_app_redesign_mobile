@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { router } from 'expo-router'
+import { router, usePreventRemove } from 'expo-router'
 import { useState, type ReactNode } from 'react'
-import { Pressable, ScrollView, Text, View } from 'react-native'
+import { Alert, Pressable, ScrollView, Text, View } from 'react-native'
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { z } from 'zod'
 
@@ -18,7 +18,7 @@ import { date } from '@/features/projects/format'
 import { ConfirmSheet } from '@/features/projects/Sheet'
 import { goBack } from '@/features/projects/TabHeader'
 
-import { compositionOf, FAMILY_OPTIONS, preview, rowsOf, STATUS_OPTIONS, type Row } from './balance'
+import { compositionOf, FAMILY_OPTIONS, preview, rowProblem, rowsOf, STATUS_OPTIONS, type Row } from './balance'
 import { CompositionView, RecipeStatusChip } from './parts'
 
 export function RecipeScreen({ id }: { id: string }) {
@@ -123,17 +123,29 @@ export function RecipeForm({ recipe, onDone }: { recipe: Recipe | null; onDone: 
   const { user, hasRole } = useAuth()
   const qc = useQueryClient()
   const cities = useLookups('city')
-  const [v, setV] = useState<Form>(recipe ? {
+  const [initial] = useState<Form>(() => recipe ? {
     family: recipe.family, product_name: recipe.product_name, sfdc_no: recipe.sfdc_no, location: String(recipe.location),
     customer_name: recipe.customer_name, project_name: recipe.project_name, status: recipe.status,
   } : BLANK)
+  const [v, setV] = useState<Form>(initial)
   const [errors, setErrors] = useState<Partial<Record<FormKey, string>>>({})
-  const [rows, setRows] = useState<Row[]>(recipe ? rowsOf(recipe.components) : [])
+  const [initialRows] = useState<Row[]>(() => (recipe ? rowsOf(recipe.components) : []))
+  const [rows, setRows] = useState<Row[]>(initialRows)
   const [compError, setCompError] = useState<string>()
   const [formError, setFormError] = useState<string>()
   const [tried, setTried] = useState(false)
   const [versionPrompt, setVersionPrompt] = useState<{ message: string; body: Body } | null>(null)
   const [deleting, setDeleting] = useState(false)
+
+  // Unsaved changes: leaving (back link, Cancel, hardware back, swipe) asks first.
+  const [leaving, setLeaving] = useState(false)
+  const dirty = !leaving && (JSON.stringify(v) !== JSON.stringify(initial) || JSON.stringify(rows) !== JSON.stringify(initialRows))
+  const confirmLeave = (go: () => void) => Alert.alert('Leave without saving?', 'This recipe has changes that are not saved yet.', [
+    { text: 'Stay', style: 'cancel' },
+    { text: 'Leave without saving', style: 'destructive', onPress: go },
+  ])
+  const allowLeave = usePreventRemove(dirty, ({ repeat }) => confirmLeave(repeat))
+  const cancel = () => (dirty ? confirmLeave(() => { setLeaving(true); onDone() }) : onDone())
 
   const set = <K extends FormKey>(k: K, x: Form[K]) => { setV((s) => ({ ...s, [k]: x })); setErrors((e) => ({ ...e, [k]: undefined })) }
 
@@ -145,8 +157,8 @@ export function RecipeForm({ recipe, onDone }: { recipe: Recipe | null; onDone: 
       setVersionPrompt(null)
       void qc.invalidateQueries({ queryKey: ['recipes'] })
       qc.setQueryData(['recipe', String(saved.id)], saved)
-      if (isNew) router.replace(`/recipes/${saved.id}`)
-      else onDone()
+      setLeaving(true)
+      if (isNew) { allowLeave(); router.replace(`/recipes/${saved.id}`) } else onDone()
     },
     onError: (e, body) => {
       if (e instanceof ApiError && e.status === 409 && e.code === 'new_version') {
@@ -164,7 +176,7 @@ export function RecipeForm({ recipe, onDone }: { recipe: Recipe | null; onDone: 
   })
   const remove = useMutation({
     mutationFn: () => api(`/recipes/${recipe!.id}/`, { method: 'DELETE' }),
-    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['recipes'] }); qc.removeQueries({ queryKey: ['recipe', String(recipe!.id)] }); router.replace('/recipes') },
+    onSuccess: () => { setLeaving(true); allowLeave(); void qc.invalidateQueries({ queryKey: ['recipes'] }); qc.removeQueries({ queryKey: ['recipe', String(recipe!.id)] }); router.replace('/recipes') },
   })
 
   const p = preview(rows)
@@ -191,10 +203,10 @@ export function RecipeForm({ recipe, onDone }: { recipe: Recipe | null; onDone: 
   if (recipe && !cityOptions.some((c) => c.value === String(recipe.location))) cityOptions.push({ value: String(recipe.location), label: recipe.location_name })
 
   return (
-    <Shell title={isNew ? 'New recipe' : `Edit ${recipe.label}`} onBack={isNew ? undefined : onDone}
+    <Shell title={isNew ? 'New recipe' : `Edit ${recipe.label}`} onBack={isNew ? undefined : cancel}
       sub={!isNew && recipe.formulation_name ? <Small style={{ fontSize: 14 }}>Formulation {recipe.formulation_name}</Small> : undefined}
       footer={<>
-        {isNew ? null : <Button title="Cancel" onPress={onDone} />}
+        {isNew ? null : <Button title="Cancel" onPress={cancel} />}
         <Button title="Save recipe" variant="primary" busy={save.isPending} onPress={submit} />
       </>}>
       {tried && errorCount > 0 ? (
@@ -270,7 +282,8 @@ export function CompositionEditor({ rows, onChange, error, showRowErrors }: { ro
       {error ? <View accessibilityLiveRegion="polite"><Banner tone="error">{error}</Banner></View> : null}
       {rows.map((r, i) => {
         const missing = showRowErrors && r.pct.trim() === ''
-        const bad = r.pct.trim() !== '' && (!Number.isFinite(Number(r.pct)) || Number(r.pct) < 0)
+        const problem = rowProblem(r)
+        const bad = (r.pct.trim() !== '' && (!Number.isFinite(Number(r.pct)) || Number(r.pct) < 0)) || !!problem
         return (
           <View key={r.code} style={{ gap: 4, borderBottomWidth: 1, borderColor: color.divider, paddingBottom: 8 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
@@ -286,7 +299,7 @@ export function CompositionEditor({ rows, onChange, error, showRowErrors }: { ro
             </View>
             {missing || bad ? (
               <Text accessibilityLiveRegion="polite" style={{ fontFamily: font.regular, fontSize: 13, color: color.error }}>
-                {bad ? `Enter a number of 0 or more for ${r.code}.` : `Enter a percentage, or remove ${r.code}.`}
+                {problem ?? (bad ? `Enter a number of 0 or more for ${r.code}.` : `Enter a percentage, or remove ${r.code}.`)}
               </Text>
             ) : null}
           </View>

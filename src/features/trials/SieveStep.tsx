@@ -6,14 +6,14 @@ import { useState, type ReactNode } from 'react'
 import { Text, View } from 'react-native'
 
 import { api } from '@/api/client'
-import { analyse, combine, f2, n, passingMap, r2, SIEVE_LABEL } from '@/shared/calc'
+import { analyse, combine, f2, passingMap, SIEVE_LABEL } from '@/shared/calc'
 import type { Trial } from '@/shared/types'
 import { Banner, Screen, Small } from '@/ui/kit'
 import { color, font, radius } from '@/ui/theme'
 
 import { GradingChart } from './charts'
 import { num } from './format'
-import { badNonNegative, SIEVE_MATERIAL_LABEL, SIEVE_MATERIAL_SHORT, SIEVE_MATERIALS, sieveForm, sievePayload, sieveProblems, type SieveForm, type SieveMaterial } from './forms'
+import { LIMITS, outOfRange, proportionTotal, SIEVE_MATERIAL_LABEL, SIEVE_MATERIAL_SHORT, SIEVE_MATERIALS, sieveForm, sievePayload, sieveProblems, type SieveForm, type SieveMaterial } from './forms'
 import { CellInput, cell, Section, Segmented, SourceNote, StepActions, TableHead, Verdict } from './parts'
 import { useStepForm, useWorkspace } from './workspace'
 
@@ -56,7 +56,9 @@ export function SieveStep({ readOnly, banners }: { readOnly: boolean; banners: R
     ? Object.fromEntries(SIEVE_MATERIALS.map((m) => [m, serverAnalysis(trial.results.sieves[m]) ?? live[m]])) as Record<SieveMaterial, Analysis>
     : live
   const passing = Object.fromEntries(SIEVE_MATERIALS.map((m) => [m, passingMap(live[m])]))
-  const total = r2(SIEVE_MATERIALS.reduce((s, m) => s + (n(form.proportions[m]) ?? 0), 0))
+  // Same exact 2 decimal total as the server check (blank counts as 0).
+  const totalText = proportionTotal(form)
+  const total = Number(totalText)
   const anyProportion = SIEVE_MATERIALS.some((m) => form.proportions[m].trim() !== '')
   const combined = fromServer && (trial.results.grading?.length ?? 0) > 0
     ? { points: trial.results.grading.map((g) => ({ sieve: g.sieve, combined: Number(g.combined), within: g.within })), error: null }
@@ -83,7 +85,7 @@ export function SieveStep({ readOnly, banners }: { readOnly: boolean; banners: R
         <TableHead cols={['IS sieve', 'Retained, g', 'Passing, %']} template={COLS} />
         {form.sieves[material].map((row, i) => {
           const out = a.rows.find((r) => r.sieve === row.sieve)
-          const invalid = badNonNegative(row.retained)
+          const invalid = outOfRange(row.retained, LIMITS.retained)
           return (
             <View key={row.sieve} style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 12, paddingVertical: 2, borderTopWidth: 1, borderColor: color.divider }}>
               <Text style={[{ fontFamily: font.medium, fontSize: 15, color: color.ink }, cell(76)]}>{SIEVE_LABEL[row.sieve]}</Text>
@@ -107,7 +109,7 @@ export function SieveStep({ readOnly, banners }: { readOnly: boolean; banners: R
         </View>
         <View style={{ paddingTop: 8 }}><SourceNote fromServer={fromServer} /></View>
       </Section>
-      {(fieldError || serverErrors.length > 0) ? <Banner tone="error">{fieldError ?? serverErrors.join(' ')}</Banner> : null}
+      {(fieldError || serverErrors.length > 0) ? <Banner tone="error">{fieldError || serverErrors.join(' ')}</Banner> : null}
 
       <Section title="Proportions">
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
@@ -115,7 +117,7 @@ export function SieveStep({ readOnly, banners }: { readOnly: boolean; banners: R
             <View key={m} style={{ width: '47%', flexGrow: 1, gap: 4 }}>
               <Small>{SIEVE_MATERIAL_LABEL[m]}, %</Small>
               <CellInput accessibilityLabel={`${SIEVE_MATERIAL_LABEL[m]} proportion, percent`} value={form.proportions[m]} editable={!readOnly}
-                invalid={badNonNegative(form.proportions[m])} onChangeText={(v) => setProportion(m, v)} />
+                invalid={outOfRange(form.proportions[m], LIMITS.percent)} onChangeText={(v) => setProportion(m, v)} />
             </View>
           ))}
         </View>
@@ -128,7 +130,7 @@ export function SieveStep({ readOnly, banners }: { readOnly: boolean; banners: R
             {anyProportion ? `${num(total)}%` : '–'}
           </Text>
         </View>
-        {anyProportion && total !== 100 ? <Text style={{ fontFamily: font.regular, fontSize: 13, color: color.error }}>Proportions must total 100%. They total {num(total)}%.</Text> : null}
+        {anyProportion && total !== 100 ? <Text style={{ fontFamily: font.regular, fontSize: 13, color: color.error }}>Proportions must total 100%. They total {totalText}%.</Text> : null}
       </Section>
 
       <Section title="All in grading" aside={checked.length > 0 ? (

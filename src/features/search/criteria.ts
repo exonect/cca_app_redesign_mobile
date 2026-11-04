@@ -52,9 +52,21 @@ export function splitNumbers(text: string): string[] {
   return text.split(/[,\s;]+/).map((s) => s.trim()).filter(Boolean)
 }
 
+/** Server limits for search criteria (cca/search/api.py). */
+export const LIST_MAX = 20
+export const VALUE_MAX = 200
+export const SLUMP_MAX = 1000
+const NUMBER = /^-?(\d+(\.\d*)?|\.\d+)([eE][-+]?\d+)?$/
+
+/** wc, cementitious and strength: up to 20 numbers of 0 or more. */
 export function numberError(text: string): string | undefined {
-  const bad = splitNumbers(text).filter((s) => !Number.isFinite(Number(s)))
-  return bad.length ? `${bad[0]} is not a number. Use digits, and commas between values.` : undefined
+  const items = splitNumbers(text)
+  const bad = items.filter((s) => !NUMBER.test(s) || !Number.isFinite(Number(s)))
+  if (bad.length) return `${bad[0]} is not a number. Use digits, and commas between values.`
+  if (items.some((s) => Number(s) < 0)) return 'Enter numbers of 0 or more.'
+  if (items.length > LIST_MAX) return `Use up to ${LIST_MAX} values.`
+  if (items.some((s) => s.length > VALUE_MAX)) return `Each value can be up to ${VALUE_MAX} characters.`
+  return undefined
 }
 
 /** The POST /search/ body: only criteria that will actually filter. */
@@ -120,9 +132,12 @@ export function validate(c: Criteria): Errors {
     const msg = numberError(c[k])
     if (msg) e[k] = msg
   }
-  if (c.slump.trim() && !Number.isFinite(Number(c.slump.trim()))) e.slump = 'Enter the slump in mm, as a number.'
+  const slump = c.slump.trim()
+  if (slump && (!NUMBER.test(slump) || !Number.isFinite(Number(slump)))) e.slump = 'Enter the slump in mm, as a number.'
+  else if (slump && (Number(slump) < 0 || Number(slump) > SLUMP_MAX)) e.slump = `Enter a slump or flow from 0 to ${SLUMP_MAX} mm.`
   if (c.slump.trim() && c.retention_minutes === '') e.retention_minutes = 'Choose when the slump is measured.'
   if (splitNumbers(c.strength).length && !c.strength_age) e.strength_age = 'Choose the age the strength is for.'
+  for (const k of LIST_KEYS) if (c[k].length > LIST_MAX) e[k] = `Use up to ${LIST_MAX} values.`
   return e
 }
 

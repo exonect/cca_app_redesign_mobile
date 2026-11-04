@@ -23,3 +23,20 @@ describe('search criteria', () => {
     expect(validate(c).retention_minutes).toMatch('Choose when')
   })
 })
+
+describe('final server rules for search criteria', () => {
+  it('needs numbers of 0 or more, at most 20 of them', () => {
+    expect(validate({ ...emptyCriteria(), wc: '0.38, -0.40' }).wc).toBe('Enter numbers of 0 or more.')
+    expect(validate({ ...emptyCriteria(), cementitious: '0x10' }).cementitious).toBe('0x10 is not a number. Use digits, and commas between values.')
+    expect(validate({ ...emptyCriteria(), strength: Array.from({ length: 21 }, (_, i) => String(30 + i)).join(', '), strength_age: '28d' }).strength).toBe('Use up to 20 values.')
+    expect(validate({ ...emptyCriteria(), wc: '0.38, 0.40' })).toEqual({})
+  })
+
+  it('needs a slump from 0 to 1000 mm and at most 20 values per list', () => {
+    expect(validate({ ...emptyCriteria(), slump: '1200', retention_minutes: '120' }).slump).toBe('Enter a slump or flow from 0 to 1000 mm.')
+    expect(validate({ ...emptyCriteria(), slump: '-5', retention_minutes: '120' }).slump).toBe('Enter a slump or flow from 0 to 1000 mm.')
+    expect(validate({ ...emptyCriteria(), slump: '160', retention_minutes: '120' })).toEqual({})
+    const many = Array.from({ length: 21 }, (_, i) => `Brand ${i}`)
+    expect(validate({ ...emptyCriteria(), cement_brand: many }).cement_brand).toBe('Use up to 20 values.')
+  })
+})

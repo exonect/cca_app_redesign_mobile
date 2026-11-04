@@ -7,7 +7,7 @@
 import { AGES, AGGREGATES, MATERIAL_LABEL, MATERIALS, SIEVE_LABEL, SIEVE_SETS } from '@/shared/calc'
 import type { Project, Trial } from '@/shared/types'
 
-import { castIso, castParts } from './castAt'
+import { CAST_ERRORS, castIso, castParts, isFutureDay } from './castAt'
 import { num, shortDate } from './format'
 
 export const SIEVE_MATERIALS = ['20mm', '10mm', 'river_sand', 'crushed_sand'] as const
@@ -53,6 +53,49 @@ export const isNumberText = (v: string | undefined) => blank(v) || NUMBER.test(v
 export const isNegative = (v: string | undefined) => !blank(v) && NUMBER.test(v!.trim()) && Number(v!.trim()) < 0
 /** Not a number, or below zero: what a "0 or more" field must not hold. */
 export const badNonNegative = (v: string | undefined) => !isNumberText(v) || isNegative(v)
+
+/** Server ranges for numbers inside the JSON fields (cca/trials/api.py). */
+export const LIMITS = {
+  retained: 100_000, // g
+  percent: 100, // proportions, absorption, moisture
+  ssd: 3000, // kg/m³
+  reading: 1000, // mm
+  cubeWeight: 20, // kg
+  cubeLoad: 3000, // kN
+  materialText: 100, // cement source and type
+  remarks: 1000,
+} as const
+
+/** What is wrong with a number the server reads as blank or 0 to max. */
+export function rangeProblem(v: string | undefined, max: number): 'number' | 'negative' | 'max' | null {
+  if (blank(v)) return null
+  const t = v!.trim()
+  if (!NUMBER.test(t)) return 'number'
+  const x = Number(t)
+  if (x < 0) return 'negative'
+  return x > max ? 'max' : null
+}
+export const outOfRange = (v: string | undefined, max: number) => rangeProblem(v, max) !== null
+
+/**
+ * Sum of decimal texts rounded to 2 places the way the server does it
+ * (Decimal quantize, half to even), as "100.00". Exact for the inputs the
+ * form allows (0 to 100 each), so 33.33 + 33.33 + 33.34 is exactly 100.00.
+ */
+export function decimalTotal(values: (string | undefined)[]): string {
+  const xs = values.map((v) => (v ?? '').trim()).filter((v) => v !== '' && NUMBER.test(v) && !v.startsWith('-'))
+  const places = Math.min(12, Math.max(2, ...xs.map((x) => (x.split('.')[1] ?? '').length)))
+  let sum = 0
+  for (const x of xs) {
+    const [w, f = ''] = x.split('.')
+    sum += Number((w || '0') + f.slice(0, places).padEnd(places, '0'))
+  }
+  const unit = 10 ** (places - 2)
+  let q = Math.floor(sum / unit)
+  const r = sum - q * unit
+  if (r * 2 > unit || (r * 2 === unit && q % 2 === 1)) q += 1
+  return `${Math.floor(q / 100)}.${String(q % 100).padStart(2, '0')}`
+}
 
 /** Range and decimal places of a server DecimalField, as a message or null. */
 export function decimalProblem(v: string, rule: { label: string; min?: number; minExclusive?: number; max?: number; decimals: number; maxDigits?: number }): string | null {
@@ -104,22 +147,34 @@ export function sievePayload(f: SieveForm) {
   }
 }
 
-/** Client checks that block saving step 1. Retained weights: the server
- * rejects text and negatives. Proportions: text is blocked; negatives and a
- * total other than 100 are accepted by the server and shown as warnings. */
+/** Client checks that block saving step 1, as on the server: retained
+ * weights 0 to 100000 g; proportions each 0 to 100 and, once any is
+ * entered, totalling exactly 100.00 (blank ones count as 0). */
 export function sieveProblems(f: SieveForm): Record<string, string> {
   const out: Record<string, string> = {}
   for (const m of SIEVE_MATERIALS) {
-    const bad = f.sieves[m].find((r) => badNonNegative(r.retained))
+    const bad = f.sieves[m].find((r) => outOfRange(r.retained, LIMITS.retained))
     if (bad) {
-      out.sieves = `Enter retained weights as numbers of 0 or more. Check ${SIEVE_MATERIAL_LABEL[m]} on ${SIEVE_LABEL[bad.sieve] ?? bad.sieve}.`
+      const where = `Check ${SIEVE_MATERIAL_LABEL[m]} on ${SIEVE_LABEL[bad.sieve] ?? bad.sieve}.`
+      out.sieves = rangeProblem(bad.retained, LIMITS.retained) === 'max'
+        ? `Enter retained weights of ${LIMITS.retained} g or less. ${where}`
+        : `Enter retained weights as numbers of 0 or more. ${where}`
       break
     }
   }
-  const p = SIEVE_MATERIALS.find((m) => !isNumberText(f.proportions[m]))
-  if (p) out.proportions = `Enter the ${SIEVE_MATERIAL_LABEL[p]} proportion as a number.`
+  const p = SIEVE_MATERIALS.find((m) => outOfRange(f.proportions[m], LIMITS.percent))
+  if (p) {
+    out.proportions = rangeProblem(f.proportions[p], LIMITS.percent) === 'number'
+      ? `Enter the ${SIEVE_MATERIAL_LABEL[p]} proportion as a number.`
+      : `Enter the ${SIEVE_MATERIAL_LABEL[p]} proportion from 0 to 100.`
+  } else if (SIEVE_MATERIALS.some((m) => !blank(f.proportions[m]))) {
+    const total = proportionTotal(f)
+    if (total !== '100.00') out.proportions = `Proportions must total 100%. They total ${total}%.`
+  }
   return out
 }
+
+export const proportionTotal = (f: SieveForm) => decimalTotal(SIEVE_MATERIALS.map((m) => f.proportions[m]))
 
 // --- Step 2 ------------------------------------------------------------------------
 export type MaterialEntry = { ssd: string; absorption: string; moisture: string; source: string; cement_type: string }
@@ -144,24 +199,46 @@ export function mixForm(t: Trial): MixForm {
   }
 }
 
-/** Client checks that block a save. Dosage and batch size mirror the server
- * fields (dosage 0 to 10, 2 decimals; batch size above 0, 3 decimals, 6
- * digits); material quantities must be numbers (the server would drop text). */
-export function mixProblems(f: MixForm): Record<string, string> {
+const MATERIAL_RANGES = [
+  ['ssd', 'SSD design', LIMITS.ssd, ' kg/m³'],
+  ['absorption', 'absorption', LIMITS.percent, '%'],
+  ['moisture', 'moisture', LIMITS.percent, '%'],
+] as const
+
+/** Client checks that block a save, mirroring TrialWriteSerializer: trial
+ * date not after today (IST) and not cleared once started; dosage 0 to 10,
+ * 2 decimals, and only with its product; batch size above 0, 3 decimals, 6
+ * digits; SSD design 0 to 3000 kg/m³, absorption and moisture 0 to 100 %;
+ * cement source and type up to 100 characters. */
+export function mixProblems(f: MixForm, status?: Trial['status']): Record<string, string> {
   const out: Record<string, string> = {}
-  const { error } = castIso(f.cast_date, f.cast_time)
+  const { iso, error } = castIso(f.cast_date, f.cast_time)
   if (error) out.cast_at = error
-  for (const [k, label] of [['dosage_1', 'the dosage'], ['dosage_2', 'the second dosage']] as const) {
+  else if (iso && isFutureDay(f.cast_date)) out.cast_at = CAST_ERRORS.future
+  else if (!iso && status && status !== 'draft') out.cast_at = CAST_ERRORS.cleared
+  for (const [k, label, product] of [['dosage_1', 'the dosage', 'admixture_1'], ['dosage_2', 'the second dosage', 'admixture_2']] as const) {
     const msg = decimalProblem(f[k], { label, min: 0, max: 10, decimals: 2, maxDigits: 5 })
     if (msg) out[k] = msg
+    else if (!blank(f[k]) && blank(f[product])) out[k] = 'Choose the product before entering its dosage.'
   }
   const batch = decimalProblem(f.batch_size, { label: 'the batch size', minExclusive: 0, decimals: 3, maxDigits: 6 })
   if (batch) out.batch_size = batch
   for (const m of MATERIALS) {
+    if (m === 'admixture_1' || m === 'admixture_2') continue // not sent; the server sets it from the dosage
     const x = f.materials[m]
-    const key = (['ssd', 'absorption', 'moisture'] as const).find((k) => !isNumberText(x?.[k]))
-    if (key) {
-      out.materials = `Enter ${MATERIAL_LABEL[m] ?? m} ${key === 'ssd' ? 'SSD design' : key} as a number.`
+    const name = MATERIAL_LABEL[m] ?? m
+    for (const [k, label, max, unit] of MATERIAL_RANGES) {
+      if (k !== 'ssd' && !AGGREGATES.includes(m)) continue // only aggregates send absorption and moisture
+      const p = rangeProblem(x?.[k], max)
+      if (p) {
+        out.materials = p === 'number' ? `Enter ${name} ${label} as a number.` : `Enter ${name} ${label} from 0 to ${max}${unit}.`
+        break
+      }
+    }
+    if (out.materials) break
+    const text = (['source', 'cement_type'] as const).find((k) => (x?.[k] ?? '').trim().length > LIMITS.materialText)
+    if (text) {
+      out.materials = `${name} ${text === 'source' ? 'source' : 'cement type'} can be up to ${LIMITS.materialText} characters.`
       break
     }
   }
@@ -208,11 +285,16 @@ export function freshForm(t: Trial, project?: Project): FreshForm {
 
 const filled = (o: Record<string, string>) => Object.fromEntries(Object.entries(o).filter(([, v]) => !blank(v)).map(([k, v]) => [k, v.trim()]))
 
-/** Readings must be numbers of 0 or more (server rule); density 1000 to 3000 kg/m³, 1 decimal. */
+/** Readings 0 to 1000 mm (server rule); density 1000 to 3000 kg/m³, 1 decimal. */
 export function freshProblems(f: FreshForm): Record<string, string> {
   const out: Record<string, string> = {}
-  const bad = READING_MINUTES.find((m) => badNonNegative(f.readings[m]))
-  if (bad) out.fresh_readings = `Enter readings in mm as numbers of 0 or more. Check ${bad === '0' ? 'the initial reading' : `${bad} min`}.`
+  const bad = READING_MINUTES.find((m) => outOfRange(f.readings[m], LIMITS.reading))
+  if (bad) {
+    const where = `Check ${bad === '0' ? 'the initial reading' : `${bad} min`}.`
+    out.fresh_readings = rangeProblem(f.readings[bad], LIMITS.reading) === 'max'
+      ? `Enter readings of ${LIMITS.reading} mm or less. ${where}`
+      : `Enter readings in mm as numbers of 0 or more. ${where}`
+  }
   const density = decimalProblem(f.fresh_density, { label: 'the density', min: 1000, max: 3000, decimals: 1, maxDigits: 6 })
   if (density) out.fresh_density = density
   return out
@@ -236,10 +318,20 @@ export function cubeRows(t: Trial, age: string): CubeEntry[] {
   return rows
 }
 
-/** Weights and loads must be numbers of 0 or more (the server rejects negatives and drops text). */
+/** Server rules for one age: up to 6 cubes, weight 0 to 20 kg, load 0 to 3000 kN, blank allowed. */
+export const CUBES_MAX = 6
+export const badCubeWeight = (v: string) => outOfRange(v, LIMITS.cubeWeight)
+export const badCubeLoad = (v: string) => outOfRange(v, LIMITS.cubeLoad)
 export function cubeProblem(rows: CubeEntry[]): string | null {
-  const i = rows.findIndex((r) => badNonNegative(r.weight) || badNonNegative(r.load))
-  return i < 0 ? null : `Enter weights and loads as numbers of 0 or more. Check cube ${i + 1}.`
+  if (rows.length > CUBES_MAX) return `Enter up to ${CUBES_MAX} cubes.`
+  for (const [i, r] of rows.entries()) {
+    const w = rangeProblem(r.weight, LIMITS.cubeWeight)
+    const l = rangeProblem(r.load, LIMITS.cubeLoad)
+    if (w === 'number' || w === 'negative' || l === 'number' || l === 'negative') return `Enter weights and loads as numbers of 0 or more. Check cube ${i + 1}.`
+    if (w === 'max') return `Enter a weight of ${LIMITS.cubeWeight} kg or less. Check cube ${i + 1}.`
+    if (l === 'max') return `Enter a load of ${LIMITS.cubeLoad} kN or less. Check cube ${i + 1}.`
+  }
+  return null
 }
 
 export const cubePayload = (rows: CubeEntry[]) => ({ cubes: rows.map((r) => ({ weight: orNull(r.weight), load: orNull(r.load) })) })
@@ -284,6 +376,7 @@ export const SIGNATORY_MAX = 150
 export const SIGNATURE_MAX_CHARS = 400_000
 export function conclusionProblems(f: ConclusionForm): Record<string, string> {
   const out: Record<string, string> = {}
+  if (f.remarks.trim().length > LIMITS.remarks) out.remarks = `Use ${LIMITS.remarks} characters or fewer.`
   for (const s of SIGNATORIES) {
     if (f[s.name].trim().length > SIGNATORY_MAX) out[s.name] = `Use ${SIGNATORY_MAX} characters or fewer.`
     if (f[s.sign].length > SIGNATURE_MAX_CHARS) out[s.sign] = 'This signature image is too large. Clear it and sign again.'

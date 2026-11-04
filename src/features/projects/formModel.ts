@@ -30,6 +30,11 @@ const optionalDecimal = (label: string, wholeDigits: number) => z.string().trim(
   .refine((v) => !/^\d+(\.\d{1,2})?$/.test(v) || v.split('.')[0].replace(/^0+(?=\d)/, '').length <= wholeDigits,
     `Enter ${label} with at most ${wholeDigits} digits before the decimal point.`)
 
+/** Server limits (ProjectWriteSerializer). */
+export const REMARKS_MAX = 2000
+export const NOTE_MAX = 1000
+export const CEMENTITIOUS_MAX = 10
+
 export const projectSchema = z.object({
   customer_name: z.string().trim().max(256, 'Use 256 characters or fewer.'),
   project_name: z.string().trim().max(256, 'Use 256 characters or fewer.'),
@@ -42,13 +47,15 @@ export const projectSchema = z.object({
   potential_cr: optionalDecimal('the potential', 8),
   selling_basic_price: optionalDecimal('the bulk price', 10),
   bulk_and_barrel: optionalDecimal('the barrel price', 10),
-  remarks: z.string(),
+  remarks: z.string().trim().max(REMARKS_MAX, `Use ${REMARKS_MAX} characters or fewer.`),
   region: z.string(), city: z.string(), wc_ratio_corrected: z.string(), retention_time: z.string(), slump_flow: z.string(),
   strength_age: z.string(), sand_type: z.string(), fine_aggregate_source: z.string(), coarse_aggregate_source: z.string(),
   sand_zone: z.string(), admixture_base: z.string(),
   cement_brands: z.array(z.number()), cement_grades: z.array(z.number()), mineral_admixtures: z.array(z.number()),
   grades_of_concrete: z.array(z.number()), wc_ratios_ssd: z.array(z.number()), compressive_strengths: z.array(z.number()),
-  cementitious_contents: z.array(z.number().int().min(100).max(999)),
+  cementitious_contents: z.array(z.number().int().min(100, 'Enter whole numbers from 100 to 999 kg/m³.').max(999, 'Enter whole numbers from 100 to 999 kg/m³.'))
+    .max(CEMENTITIOUS_MAX, `Enter up to ${CEMENTITIOUS_MAX} cementitious contents.`)
+    .refine((xs) => new Set(xs).size === xs.length, 'Each cementitious content can be entered once.'),
   requirement_type: z.enum(['', 'slump', 'flow']),
 })
 export type ProjectFormValues = z.infer<typeof projectSchema>
@@ -111,6 +118,43 @@ export function stepForErrors(fields: string[]): 1 | 2 | null {
   const known = fields.filter(isFormField)
   if (known.length === 0) return null
   return known.some((f) => STEP1_FIELDS.includes(f)) ? 1 : 2
+}
+
+/** Why a typed cementitious content cannot be added to the list, or null. */
+export function cementitiousProblem(text: string, list: number[]): string | null {
+  const t = text.trim()
+  if (!/^\d+$/.test(t) || Number(t) < 100 || Number(t) > 999) return 'Enter a whole number from 100 to 999 kg/m³.'
+  if (list.includes(Number(t))) return `${Number(t)} kg/m³ is already in the list.`
+  if (list.length >= CEMENTITIOUS_MAX) return `Enter up to ${CEMENTITIOUS_MAX} cementitious contents.`
+  return null
+}
+
+/**
+ * A value typed in the cementitious box but not added with Add would be lost
+ * on save. A valid one is added; anything else is an error to fix first.
+ */
+export function withPendingCementitious(v: ProjectFormValues, text: string): { values: ProjectFormValues; error?: string } {
+  if (!text.trim()) return { values: v }
+  const problem = cementitiousProblem(text, v.cementitious_contents)
+  if (problem) return { values: v, error: `${problem} Fix or clear the value you typed, then save again.` }
+  return { values: { ...v, cementitious_contents: [...v.cementitious_contents, Number(text.trim())].sort((a, b) => a - b) } }
+}
+
+/** Fields required on submit that the server keeps filled once the project is past draft
+ * (REQUIRED_ON_SUBMIT and REQUIRED_M2M_ON_SUBMIT), plus at least one price above zero. */
+export const REQUIRED_AFTER_DRAFT: FormField[] = [
+  ...STEP1_REQUIRED, 'wc_ratio_corrected', 'cementitious_contents', 'requirement_type', 'retention_time', 'slump_flow',
+  'strength_age', 'sand_type', 'fine_aggregate_source', 'coarse_aggregate_source', 'sand_zone', ...M2M_FIELDS,
+]
+export function requiredAfterDraft(v: ProjectFormValues, picksSalesPerson: boolean): FormErrors {
+  const out: FormErrors = {}
+  for (const f of REQUIRED_AFTER_DRAFT) {
+    if (f === 'sales_person' && !picksSalesPerson) continue
+    const x = v[f]
+    if (Array.isArray(x) ? x.length === 0 : String(x).trim() === '') out[f] = `${LABELS[f]} is required once the project is created.`
+  }
+  if (priceMissing(v)) out.selling_basic_price = PRICE_MESSAGE
+  return out
 }
 
 /** Step 1 fields still empty, for "Continue" (sales_person only when the user picks it). */

@@ -6,6 +6,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Banner, Body, Button, ErrorState, Field, H2, Row, TextField } from '@/ui/kit'
 import { color } from '@/ui/theme'
 
+import { NOTE_MAX } from './formModel'
+
 export function Sheet({ open, onClose, title, children, footer, tall }: {
   open: boolean; onClose: () => void; title: string; children: ReactNode; footer?: ReactNode; tall?: boolean
 }) {
@@ -70,7 +72,7 @@ function NoteSheetBody({ open, onClose, title, intro, noteLabel, confirmLabel, b
       </>}>
       <Body style={{ color: color.subtle }}>{intro}</Body>
       <Field label={noteLabel} hint="Optional">
-        <TextField accessibilityLabel={noteLabel} value={note} onChangeText={setNote} multiline style={{ minHeight: 80, textAlignVertical: 'top' }} />
+        <TextField accessibilityLabel={noteLabel} value={note} onChangeText={setNote} maxLength={NOTE_MAX} multiline style={{ minHeight: 80, textAlignVertical: 'top' }} />
       </Field>
       {error ? <View accessibilityLiveRegion="polite"><ErrorState error={error} /></View> : null}
     </Sheet>

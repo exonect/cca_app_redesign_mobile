@@ -14,7 +14,7 @@ import { Banner, Button, Screen, Small } from '@/ui/kit'
 import { color, font, radius } from '@/ui/theme'
 
 import { istDay, shortDate } from './format'
-import { badNonNegative, cubePayload, cubeProblem, cubeRows, pct, requirementTargets, sortAges, type CubeEntry } from './forms'
+import { badCubeLoad, badCubeWeight, cubePayload, cubeProblem, cubeRows, pct, requirementTargets, sortAges, type CubeEntry } from './forms'
 import { CellInput, cell, StepFooter, TableHead } from './parts'
 import { saveError, useReloadTrial, useSaver, useWorkspace } from './workspace'
 
@@ -233,11 +233,11 @@ function AgeCard({ age, form, dirty, canEdit, target, error, onChange, onRemove 
           <Text style={[{ fontFamily: font.semibold, fontSize: 15, color: color.ink }, cell(44)]}>{i + 1}</Text>
           <View style={cell('flex')}>
             <CellInput accessibilityLabel={`${label}, cube ${i + 1} weight in kilograms`} value={r.weight} editable={canEdit}
-              invalid={badNonNegative(r.weight)} onChangeText={(v) => onChange(i, 'weight', v)} />
+              invalid={badCubeWeight(r.weight)} onChangeText={(v) => onChange(i, 'weight', v)} />
           </View>
           <View style={cell('flex')}>
             <CellInput accessibilityLabel={`${label}, cube ${i + 1} load in kilonewtons`} value={r.load} editable={canEdit}
-              invalid={badNonNegative(r.load)} onChangeText={(v) => onChange(i, 'load', v)} />
+              invalid={badCubeLoad(r.load)} onChangeText={(v) => onChange(i, 'load', v)} />
           </View>
           <Text testID={`str-${age}-${i}`} style={[{ fontFamily: font.semibold, fontSize: 16, color: color.ink, textAlign: 'right', fontVariant: ['tabular-nums'] }, cell('flex')]}>
             {f2(strength(r.load)) || '–'}

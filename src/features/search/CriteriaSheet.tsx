@@ -47,12 +47,12 @@ function Body_({ open, initial, onClose, onApply }: { open: boolean; initial: Cr
       {errorCount ? <Banner tone="error">{errorCount === 1 ? '1 criterion needs' : `${errorCount} criteria need`} attention.</Banner> : null}
 
       <Group title="Cement">
-        <LookupMulti category="cement_brand" label="Cement brand" noun="cement brand" value={c.cement_brand} onChange={(v) => set('cement_brand', v)} />
-        <LookupMulti category="cement_grade" label="Cement grade" noun="cement grade" value={c.cement_grade} onChange={(v) => set('cement_grade', v)} />
+        <LookupMulti category="cement_brand" label="Cement brand" noun="cement brand" value={c.cement_brand} error={errors.cement_brand} onChange={(v) => set('cement_brand', v)} />
+        <LookupMulti category="cement_grade" label="Cement grade" noun="cement grade" value={c.cement_grade} error={errors.cement_grade} onChange={(v) => set('cement_grade', v)} />
       </Group>
 
       <Group title="Concrete">
-        <LookupMulti category="grade_of_concrete" label="Grade of concrete" noun="grade" value={c.grade_of_concrete} onChange={(v) => set('grade_of_concrete', v)} />
+        <LookupMulti category="grade_of_concrete" label="Grade of concrete" noun="grade" value={c.grade_of_concrete} error={errors.grade_of_concrete} onChange={(v) => set('grade_of_concrete', v)} />
         <Field label="Free W/C, SSD, ±0.02" error={errors.wc} hint={rangeHint('wc', c.wc) ? `Matches ${rangeHint('wc', c.wc)}.` : 'Separate several values with commas.'}>
           <TextField accessibilityLabel="Free W/C, SSD" keyboardType="numbers-and-punctuation" invalid={Boolean(errors.wc)} value={c.wc} onChangeText={(t) => set('wc', t)} />
         </Field>
@@ -71,9 +71,9 @@ function Body_({ open, initial, onClose, onApply }: { open: boolean; initial: Cr
         <Field label="Sand type">
           <Picker label="Sand type" value={c.sand_type} options={SAND_TYPES} onChange={(v) => set('sand_type', v ?? '')} />
         </Field>
-        <LookupMulti category="sand_zone" label="Sand zone" noun="sand zone" value={c.sand_zone} onChange={(v) => set('sand_zone', v)} />
-        <LookupMulti category="fine_aggregate_source" label="Fine aggregate source" noun="source" value={c.fine_aggregate_source} onChange={(v) => set('fine_aggregate_source', v)} />
-        <LookupMulti category="coarse_aggregate_source" label="Coarse aggregate source" noun="source" value={c.coarse_aggregate_source} onChange={(v) => set('coarse_aggregate_source', v)} />
+        <LookupMulti category="sand_zone" label="Sand zone" noun="sand zone" value={c.sand_zone} error={errors.sand_zone} onChange={(v) => set('sand_zone', v)} />
+        <LookupMulti category="fine_aggregate_source" label="Fine aggregate source" noun="source" value={c.fine_aggregate_source} error={errors.fine_aggregate_source} onChange={(v) => set('fine_aggregate_source', v)} />
+        <LookupMulti category="coarse_aggregate_source" label="Coarse aggregate source" noun="source" value={c.coarse_aggregate_source} error={errors.coarse_aggregate_source} onChange={(v) => set('coarse_aggregate_source', v)} />
       </Group>
 
       <Group title="Slump retention" note="±20 mm">
@@ -132,14 +132,14 @@ function Group({ title, note, children }: { title: string; note?: string; childr
 }
 
 /** Choose several master values by name: a picker to add, chips to remove. */
-export function LookupMulti({ category, label, noun, value, onChange }: {
-  category: string; label: string; noun: string; value: string[]; onChange: (v: string[]) => void
+export function LookupMulti({ category, label, noun, value, onChange, error }: {
+  category: string; label: string; noun: string; value: string[]; onChange: (v: string[]) => void; error?: string
 }) {
   const q = useLookups(category)
   const has = (v: string) => value.some((x) => x.toLowerCase() === v.toLowerCase())
   const options = (q.data ?? []).filter((l) => !has(l.value)).map((l) => ({ value: l.value, label: l.value }))
   return (
-    <Field label={label} hint={q.isError ? `The ${noun} list could not be loaded.` : undefined}>
+    <Field label={label} error={error} hint={q.isError ? `The ${noun} list could not be loaded.` : undefined}>
       <Picker label={label} value={null} options={options} disabled={q.isLoading}
         placeholder={q.isLoading ? 'Loading…' : value.length ? `Add another ${noun}` : `Any ${noun}`}
         onChange={(v) => { if (v) onChange([...value, v]) }} />

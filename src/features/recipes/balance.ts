@@ -1,4 +1,4 @@
-import { withBalance } from '@/shared/calc'
+import { n, withBalance } from '@/shared/calc'
 import type { Recipe } from '@/shared/types'
 
 export type Row = { code: string; pct: string }
@@ -19,10 +19,25 @@ export function rowsOf(components: Record<string, string>): Row[] {
   return Object.entries(components).filter(([k]) => k.toUpperCase() !== 'J000').map(([code, pct]) => ({ code, pct: String(pct) }))
 }
 
-/** Live J000 balance and total, mirroring the server rule (calc.withBalance). */
+export const RM_CODE_MAX = 20
+
+/** What the server refuses in one row (cca/calc/recipe.py with_balance and the
+ * code length check), beyond blank and negative which withBalance reports. */
+export function rowProblem(r: Row): string | null {
+  const code = r.code.trim().toUpperCase()
+  if (!code || code.length > RM_CODE_MAX) return `Raw material codes are 1 to ${RM_CODE_MAX} characters.`
+  const x = n(r.pct)
+  if (x === null || x < 0) return null
+  if (x > 100) return `${code} cannot be more than 100%.`
+  if (Math.abs(x * 100 - Math.round(x * 100)) > 1e-6) return `${code} can have up to 2 decimal places.`
+  return null
+}
+
+/** Live J000 balance and total, mirroring the server rule (calc.withBalance plus the row checks). */
 export function preview(rows: Row[]) {
   const r = withBalance(compositionOf(rows))
-  return { ...r, balance: r.parts.J000, exact: r.errors.length === 0 && r.total === 100 && rows.length > 0 }
+  const errors = [...rows.map(rowProblem).filter((x): x is string => !!x), ...r.errors]
+  return { ...r, errors, balance: r.parts.J000, exact: errors.length === 0 && r.total === 100 && rows.length > 0 }
 }
 
 /** Composition bar segments: the largest codes, the rest folded into "n more codes", J000 last. */

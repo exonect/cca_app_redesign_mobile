@@ -9,6 +9,7 @@ import { Banner, Button, EmptyState, ErrorState, Field, Loading, Small, Strong, 
 import { color, font, radius } from '@/ui/theme'
 
 import { refreshAfterRefusal, storeProject } from './api'
+import { NOTE_MAX } from './formModel'
 import { plural } from './format'
 import { Sheet } from './Sheet'
 import { Avatar } from './TabHeader'
@@ -94,7 +95,7 @@ function Body_({ project, open, onClose, onDone }: { project: AssignTarget | nul
           </View>
           {ctError ? <Text accessibilityLiveRegion="polite" style={{ color: color.error, fontFamily: font.regular, fontSize: 13 }}>{ctError}</Text> : null}
           <Field label={pickedName ? `Note to ${pickedName}` : 'Note to the CT'} hint="Optional">
-            <TextField accessibilityLabel="Note to the CT" value={note} onChangeText={setNote} multiline style={{ minHeight: 72, textAlignVertical: 'top' }} />
+            <TextField accessibilityLabel="Note to the CT" value={note} onChangeText={setNote} maxLength={NOTE_MAX} multiline style={{ minHeight: 72, textAlignVertical: 'top' }} />
           </Field>
           {pickedName ? (
             <Banner>
