@@ -7,6 +7,7 @@ import { api, fieldErrors, type Page } from '@/api/client'
 import { errorMessage, otherErrors } from '@/api/errors'
 import { useLookups } from '@/api/hooks'
 import { useAuth } from '@/auth/AuthProvider'
+import { SetPasswordSheet } from '@/features/auth/PasswordSheets'
 import type { Role, User } from '@/shared/types'
 import type { UserWithManagerSource } from '@/shared/typesExt'
 import { Banner, Body, Button, EmptyState, ErrorState, Field, Loading, Picker, Small, Strong, TextField } from '@/ui/kit'
@@ -31,13 +32,14 @@ const ROLE_DESC: Record<Role, string> = {
 
 export function UsersScreen() {
   const qc = useQueryClient()
-  const { user: me } = useAuth()
+  const { user: me, passwordLogin } = useAuth()
   const [status, setStatus] = useState<'active' | 'inactive'>('active')
   const [role, setRole] = useState<Role | ''>('')
   const [text, setText] = useState('')
   const search = useDebounced(text.trim(), 300)
   const [editing, setEditing] = useState<User | 'new' | null>(null)
   const [toggling, setToggling] = useState<User | null>(null)
+  const [settingPassword, setSettingPassword] = useState<User | null>(null)
   const [notice, setNotice, clearNotice] = useNotice()
 
   const query = { search: search || undefined, role: role || undefined, is_active: status === 'active', ordering: 'first_name' }
@@ -108,8 +110,11 @@ export function UsersScreen() {
                 <Small>{u.manager_name ? `Manager ${u.manager_name}. ` : ''}Last sign in {u.last_login ? date(u.last_login) : 'never'}</Small>
               </View>
             </View>
-            <View style={{ flexDirection: 'row', gap: 8 }}>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
               <Button title="Edit" onPress={() => setEditing(u)} accessibilityLabel={`Edit ${u.full_name}`} />
+              {passwordLogin ? (
+                <Button title="Set password" onPress={() => setSettingPassword(u)} accessibilityLabel={`Set password for ${u.full_name}`} />
+              ) : null}
               {u.id !== me?.id ? (
                 <Button title={u.is_active ? 'Deactivate' : 'Reactivate'} variant={u.is_active ? 'danger' : 'secondary'}
                   accessibilityLabel={`${u.is_active ? 'Deactivate' : 'Reactivate'} ${u.full_name}`} onPress={() => { toggle.reset(); setToggling(u) }} />
@@ -128,6 +133,10 @@ export function UsersScreen() {
       />
 
       <UserSheet key={editing === null ? 'closed' : editing === 'new' ? 'new' : editing.id} user={editing} onClose={() => setEditing(null)} onDone={setNotice} />
+      {settingPassword ? (
+        <SetPasswordSheet key={settingPassword.id} user={settingPassword} onClose={() => setSettingPassword(null)}
+          onDone={(msg) => { setSettingPassword(null); setNotice(msg) }} />
+      ) : null}
       {toggling ? (
         <ConfirmSheet open danger={toggling.is_active} onClose={() => setToggling(null)}
           title={toggling.is_active ? `Deactivate ${toggling.full_name}?` : `Reactivate ${toggling.full_name}?`}
@@ -171,7 +180,7 @@ export function managerSourceNote(u: UserWithManagerSource): string | null {
 function UserSheet({ user, onClose, onDone }: { user: User | 'new' | null; onClose: () => void; onDone: (msg: string) => void }) {
   const existing = user && user !== 'new' ? user as UserWithManagerSource : null
   const initialManager = existing?.manager ? String(existing.manager) : ''
-  const { user: me } = useAuth()
+  const { user: me, passwordLogin } = useAuth()
   // The server refuses an Admin changing their own role or deactivating themselves.
   const isSelf = !!existing && existing.id === me?.id
   const qc = useQueryClient()
@@ -226,7 +235,13 @@ function UserSheet({ user, onClose, onDone }: { user: User | 'new' | null; onClo
         <Button title="Cancel" onPress={onClose} />
         <Button title={existing ? 'Save user' : 'Add user'} variant="primary" busy={save.isPending} onPress={submit} />
       </>}>
-      <Banner>No password is set here. The person signs in with their Thermax Microsoft account and gets access once you add them.</Banner>
+      {passwordLogin ? (
+        <Banner>{existing
+          ? 'The person signs in with their Thermax Microsoft account. While ID and password sign in is turned on for testing, you can also give them a password with Set password on the user list.'
+          : 'The person signs in with their Thermax Microsoft account. While ID and password sign in is turned on for testing, you can give them a password with Set password once they are added.'}</Banner>
+      ) : (
+        <Banner>No password is set here. The person signs in with their Thermax Microsoft account and gets access once you add them.</Banner>
+      )}
       {formError ? <Banner tone="error">{formError}</Banner> : null}
       <Field label="Thermax email" required error={errors.email}>
         <TextField accessibilityLabel="Thermax email" keyboardType="email-address" autoCapitalize="none" autoCorrect={false} invalid={Boolean(errors.email)} maxLength={254}

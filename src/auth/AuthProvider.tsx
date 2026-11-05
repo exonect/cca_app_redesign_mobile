@@ -11,6 +11,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 
 import { api, session } from '@/api/client'
 import { errorMessage, isApiError, UserError } from '@/api/errors'
+import { checkSignIn, parseAuthOptions, signInProblem, type AuthOptions, type SignInProblem } from '@/features/auth/password'
 import { cachedUser, clearCache } from '@/offline/cache'
 import { isOnline, subscribe as onConnectivity } from '@/offline/connectivity'
 import { offlineStorage } from '@/offline/storage'
@@ -32,6 +33,12 @@ type Ctx = {
   /** Signed in from the data saved on this phone because the server could not be reached; checked again once online. */
   offline: boolean
   signInWithMicrosoft: () => Promise<void>; devSignIn: (email: string) => Promise<void>; signOut: () => Promise<void>
+  /** Temporary ID and password sign in. Resolves null once signed in, else what to show (never throws). */
+  signInWithPassword: (login: string, password: string) => Promise<SignInProblem | null>
+  /** How the server lets people sign in (GET /auth/options/); null until it answers. */
+  options: AuthOptions | null; optionsState: 'loading' | 'ready' | 'error'; reloadOptions: () => Promise<void>
+  /** ID and password sign in is on (server switch): shows Set password and Change password. */
+  passwordLogin: boolean
   hasRole: (...roles: Role[]) => boolean
   /** Try resuming the saved session again (from the unavailable state). */
   resume: () => Promise<void>
@@ -53,6 +60,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [offline, setOffline] = useState(false)
+  const [options, setOptions] = useState<AuthOptions | null>(null)
+  const [optionsState, setOptionsState] = useState<'loading' | 'ready' | 'error'>('loading')
 
   const discovery = useAutoDiscovery(TENANT_ID ? `https://login.microsoftonline.com/${TENANT_ID}/v2.0` : 'https://invalid.local')
   const redirectUri = makeRedirectUri({ native: `${SCHEME}://auth` })
@@ -136,6 +145,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setStatus('signed_out')
   }, [])
 
+  // Sign in options come from the server, so the temporary password sign in
+  // can be switched off there without a new build. Checked again on the sign
+  // in screen, after signing in, and when the connection comes back after a failure.
+  const fetchOptions = useCallback(() => Promise.resolve().then(() => api<unknown>('/auth/options/')).then((body) => {
+    const next = parseAuthOptions(body)
+    if (next) setOptions(next)
+    setOptionsState(next ? 'ready' : 'error')
+  }, () => setOptionsState('error')), [])
+  const reloadOptions = useCallback(async () => {
+    setOptionsState('loading')
+    await fetchOptions()
+  }, [fetchOptions])
+  const settled = status === 'signed_out' || status === 'signed_in'
+  useEffect(() => { if (status === 'signed_out' || status === 'signed_in') void fetchOptions() }, [status, fetchOptions])
+  useEffect(() => {
+    if (!settled || optionsState !== 'error') return
+    return onConnectivity(() => { if (isOnline()) void fetchOptions() })
+  }, [settled, optionsState, fetchOptions])
+
   useEffect(() => session.onExpired(() => {
     setOffline(false)
     setUser(null)
@@ -178,10 +206,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       catch (e) { setError(errorMessage(e, 'Sign in failed. Try again.')) }
       finally { setBusy(false) }
     },
+    async signInWithPassword(login: string, password: string) {
+      setError(null)
+      const fields = checkSignIn(login, password)
+      if (fields.login || fields.password) return { fields }
+      setBusy(true)
+      try {
+        // Same session as Microsoft sign in: tokens in secure storage, the user's own offline cache, same sign out.
+        await start(await api<SessionResponse>('/auth/password/', { body: { login: login.trim(), password } }))
+        return null
+      } catch (e) {
+        return signInProblem(e)
+      } finally {
+        setBusy(false)
+      }
+    },
+    options, optionsState, reloadOptions,
+    passwordLogin: options?.password === true,
     signOut,
     resume,
     hasRole: (...roles: Role[]) => Boolean(user && roles.includes(user.role)),
-  }), [status, user, error, busy, offline, request, discovery, promptAsync, redirectUri, start, signOut, resume])
+  }), [status, user, error, busy, offline, options, optionsState, reloadOptions, request, discovery, promptAsync, redirectUri, start, signOut, resume])
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }

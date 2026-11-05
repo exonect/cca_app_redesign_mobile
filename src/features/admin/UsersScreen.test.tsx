@@ -16,7 +16,10 @@ jest.mock('@/api/client', () => ({
 }))
 jest.mock('expo-router', () => ({ router: { push: jest.fn(), replace: jest.fn(), back: jest.fn(), canGoBack: () => true, navigate: jest.fn() } }))
 jest.mock('react-native-safe-area-context', () => require('react-native-safe-area-context/jest/mock').default)
-jest.mock('@/auth/AuthProvider', () => ({ useAuth: () => ({ user: { id: 1, full_name: 'Neha Admin' }, hasRole: (...r: string[]) => r.includes('AD') }) }))
+let mockPasswordLogin = false
+jest.mock('@/auth/AuthProvider', () => ({
+  useAuth: () => ({ user: { id: 1, full_name: 'Neha Admin' }, hasRole: (...r: string[]) => r.includes('AD'), passwordLogin: mockPasswordLogin, reloadOptions: jest.fn() }),
+}))
 
 const user = (over: Partial<User>): User => ({
   id: 1, email: 'neha@thermaxglobal.com', emp_id: 'E1001', first_name: 'Neha', last_name: 'Admin', full_name: 'Neha Admin', role: 'AD',
@@ -93,5 +96,33 @@ describe('manager source (set in CCA or from Entra ID)', () => {
     expect(managerSourceNote({ manager_source: 'none', entra_manager_email: 'boss@thermaxglobal.com' }))
       .toBe('No manager in CCA or Entra ID. Entra ID lists boss@thermaxglobal.com, who is not a CCA user.')
     expect(managerSourceNote({})).toBeNull()
+  })
+})
+
+describe('Set password (temporary ID and password sign in)', () => {
+  afterEach(() => { mockPasswordLogin = false })
+
+  it('is not offered while ID and password sign in is off', async () => {
+    const qc = newClient()
+    await render(<QueryClientProvider client={qc}><UsersScreen /></QueryClientProvider>)
+    await screen.findByRole('button', { name: 'Edit Ravi Kumar' })
+    expect(screen.queryByRole('button', { name: 'Set password for Ravi Kumar' })).toBeNull()
+    qc.clear()
+  })
+
+  it('sets a password for a user and confirms it by name', async () => {
+    mockPasswordLogin = true
+    const base = mockApi.getMockImplementation()!
+    mockApi.mockImplementation(async (path: string, opts?: { method?: string; body?: unknown }) =>
+      path === '/users/2/set-password/' ? undefined : base(path, opts))
+    const qc = newClient()
+    await render(<QueryClientProvider client={qc}><UsersScreen /></QueryClientProvider>)
+    await fireEvent.press(await screen.findByRole('button', { name: 'Set password for Ravi Kumar' }))
+    await fireEvent.changeText(screen.getByLabelText('New password'), 'Kiln#Batch42')
+    await fireEvent.changeText(screen.getByLabelText('Confirm password'), 'Kiln#Batch42')
+    await fireEvent.press(screen.getByRole('button', { name: 'Set password' }))
+    expect(await screen.findByText('Password set for Ravi Kumar')).toBeTruthy()
+    expect(mockApi).toHaveBeenCalledWith('/users/2/set-password/', { body: { password: 'Kiln#Batch42' } })
+    qc.clear()
   })
 })

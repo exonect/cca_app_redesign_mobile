@@ -9,7 +9,9 @@ import { useSyncCounts } from '@/offline/outbox'
 import { Body, Button, H2, Small, Strong } from '@/ui/kit'
 import { color, font, radius } from '@/ui/theme'
 
-import { ConfirmSheet } from '@/features/projects/Sheet'
+import { ChangePasswordSheet } from '@/features/auth/PasswordSheets'
+import { useNotice } from '@/features/projects/hooks'
+import { ConfirmSheet, Notice } from '@/features/projects/Sheet'
 import { Avatar, TabHeader } from '@/features/projects/TabHeader'
 
 import { powerBiUrl } from './powerBi'
@@ -37,8 +39,10 @@ export async function openPowerBi() {
 }
 
 export function MoreScreen() {
-  const { user, hasRole, signOut } = useAuth()
+  const { user, hasRole, signOut, passwordLogin } = useAuth()
   const [confirm, setConfirm] = useState(false)
+  const [changingPassword, setChangingPassword] = useState(false)
+  const [notice, setNotice, clearNotice] = useNotice()
   const [busy, setBusy] = useState(false)
   const admin = hasRole('AD')
   const sync = useSyncCounts()
@@ -91,6 +95,14 @@ export function MoreScreen() {
           )}
         </View>
 
+        {passwordLogin ? (
+          <View style={{ gap: 8 }}>
+            <H2>Account</H2>
+            <Notice text={notice} onDone={clearNotice} />
+            <List label="Account" rows={[{ title: 'Change password', meta: 'ID and password sign in', onPress: () => setChangingPassword(true) }]} />
+          </View>
+        ) : null}
+
         <View style={{ gap: 10, alignItems: 'center', paddingTop: 4 }}>
           <Button title="Sign out" onPress={() => setConfirm(true)} style={{ alignSelf: 'stretch' }} />
           <Small>{appVersion()}</Small>
@@ -103,6 +115,9 @@ export function MoreScreen() {
           : 'You will need your Thermax Microsoft account to sign in again. Nothing you saved is lost.'}
         confirmLabel="Sign out" busy={busy}
         onConfirm={async () => { setBusy(true); try { await signOut() } finally { setBusy(false) } }} />
+      {changingPassword ? (
+        <ChangePasswordSheet onClose={() => setChangingPassword(false)} onDone={(msg) => { setChangingPassword(false); setNotice(msg) }} />
+      ) : null}
     </View>
   )
 }

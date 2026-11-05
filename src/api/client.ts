@@ -145,7 +145,7 @@ export async function toError(r: Response): Promise<ApiError> {
 }
 
 /** Sign in, refresh and sign out never retry; /auth/me/ must, or resuming a saved session would always fail. */
-const NO_REFRESH = ['/auth/microsoft/', '/auth/dev/', '/auth/refresh/', '/auth/sign-out/']
+const NO_REFRESH = ['/auth/microsoft/', '/auth/password/', '/auth/dev/', '/auth/refresh/', '/auth/sign-out/']
 
 type Options = { method?: string; body?: unknown; query?: Query; form?: FormData; timeoutMs?: number }
 
