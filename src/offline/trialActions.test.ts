@@ -99,8 +99,9 @@ describe('online', () => {
 
   it('creates a trial with an id made on the phone', async () => {
     mockApi.mockImplementation(async (_path: string, opts: { body: { id: string } }) => ({ id: opts.body.id, project: 'p1', status: 'draft' }))
-    const r = await createTrial(qc, project)
-    expect(mockApi).toHaveBeenCalledWith('/trials/', { body: { id: r.trial.id, project: 'p1' } })
+    const r = await createTrial(qc, project, new Date('2026-11-05T04:40:12.345Z'))
+    // Legacy T-33: the trial date and time default to now.
+    expect(mockApi).toHaveBeenCalledWith('/trials/', { body: { id: r.trial.id, project: 'p1', cast_at: '2026-11-05T04:40:12Z' } })
     expect(r.queued).toBe(false)
     expect(qc.getQueryData(['trial', r.trial.id])).toMatchObject({ id: r.trial.id })
   })
@@ -109,9 +110,10 @@ describe('online', () => {
 describe('offline', () => {
   it('creates a draft trial, edits, starts and records cubes on the phone, then replays them in order with the same ids', async () => {
     goOffline()
-    const { trial, queued } = await createTrial(qc, project)
+    const { trial, queued } = await createTrial(qc, project, new Date('2026-11-04T03:00:00Z'))
     expect(queued).toBe(true)
-    expect(trial).toMatchObject({ project: 'p1', project_name: 'Palava towers', status: 'draft' })
+    // The trial date and time default to when it was made on the phone (legacy T-33).
+    expect(trial).toMatchObject({ project: 'p1', project_name: 'Palava towers', status: 'draft', cast_at: '2026-11-04T03:00:00Z' })
     await saveTrialPatch(qc, trial.id, COMPLETE, 'Mix design')
     const started = await startTrial(qc, { ...trial, cast_at: '2026-11-04T10:00:00+05:30' })
     expect(started.trial.status).toBe('in_progress')
@@ -125,7 +127,8 @@ describe('offline', () => {
     expect(mockApi.mock.calls.map(([path, opts]) => `${opts?.method ?? 'POST'} ${path}`)).toEqual([
       'POST /trials/', `PATCH /trials/${trial.id}/`, `POST /trials/${trial.id}/start/`, `PUT /trials/${trial.id}/cubes/1d/`,
     ])
-    expect(mockApi.mock.calls[0][1]).toEqual({ body: { id: trial.id, project: 'p1' } })
+    // Synced later, it keeps the time it was made on the phone, not the sync time.
+    expect(mockApi.mock.calls[0][1]).toEqual({ body: { id: trial.id, project: 'p1', cast_at: '2026-11-04T03:00:00Z' } })
     expect(outbox.getSnapshot()).toEqual([])
     expect(qc.getQueryData<Trial & { path: string }>(['trial', trial.id])?.path).toBe(`/trials/${trial.id}/cubes/1d/`)
   })
@@ -133,6 +136,7 @@ describe('offline', () => {
   it('will not queue a start without the trial date (the server would refuse it)', async () => {
     goOffline()
     const { trial } = await createTrial(qc, project)
+    await saveTrialPatch(qc, trial.id, { cast_at: null }) // the default cleared on purpose
     await expect(startTrial(qc, trial)).rejects.toMatchObject({ fields: { cast_at: [expect.stringContaining('trial date')] } })
   })
 

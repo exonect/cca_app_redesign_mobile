@@ -55,7 +55,9 @@ type OpBase = {
 export type CubesBody = { cubes: { weight: string | null; load: string | null }[]; tested_on?: string; remove?: true }
 
 export type OpInput =
-  | { kind: 'create_trial'; trialId: string; project: string; projectName: string; customerName: string }
+  /** castAt: the trial date and time, defaulted to when the trial was made on the phone (legacy T-33), so a
+   * trial made offline keeps that time instead of the sync time; absent on entries queued before 5 Nov 2026. */
+  | { kind: 'create_trial'; trialId: string; project: string; projectName: string; customerName: string; castAt?: string }
   | { kind: 'patch_trial'; trialId: string; body: Record<string, unknown>; what?: string }
   | { kind: 'put_cubes'; trialId: string; age: string; body: CubesBody }
   | { kind: 'start_trial'; trialId: string }

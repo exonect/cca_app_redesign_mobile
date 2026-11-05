@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react'
 import { FlatList, Pressable, Text, View } from 'react-native'
 
 import { api } from '@/api/client'
+import { fieldErrorsByPath, statusOf } from '@/api/errors'
 import type { ProjectListItem, SearchGroup } from '@/shared/types'
 import { Banner, Button, EmptyState, ErrorState, H2, Loading, Small, Strong, TextField } from '@/ui/kit'
 import { color, font, radius } from '@/ui/theme'
@@ -15,7 +16,7 @@ import { projectPlace } from '@/features/projects/ProjectCard'
 import { Sheet } from '@/features/projects/Sheet'
 import { TabHeader } from '@/features/projects/TabHeader'
 
-import { countCriteria, criteriaChips, emptyCriteria, fromServer, toRequest, type Criteria } from './criteria'
+import { countCriteria, criteriaChips, emptyCriteria, fromServer, mapServerErrors, toRequest, type Criteria } from './criteria'
 import { CriteriaSheet } from './CriteriaSheet'
 
 type SearchResponse = { criteria: Record<string, unknown>; products: number; trials: number; results: SearchGroup[] }
@@ -44,6 +45,8 @@ export function SearchScreen() {
     onSuccess: (raw, p) => { setProject(p); setCriteria(fromServer(raw)); setAllChips(false) },
   })
   const { refreshing, onRefresh } = useRefresh(() => search.refetch())
+  // A refused search (400) is about the criteria: show where, not Try again.
+  const refused = search.isError && statusOf(search.error) === 400 ? mapServerErrors(fieldErrorsByPath(search.error)) : undefined
 
   const chips = criteriaChips(criteria)
   const shown = allChips ? chips : chips.slice(0, CHIP_LIMIT)
@@ -121,6 +124,12 @@ export function SearchScreen() {
         ListEmptyComponent={
           !ran ? undefined
             : search.isPending ? <Loading label="Searching past trials" />
+              : refused ? (
+                <View style={{ gap: 10 }}>
+                  <ErrorState error={search.error} />
+                  <Button title="Fix criteria" variant="primary" onPress={() => setEditing(true)} />
+                </View>
+              )
               : search.isError ? <ErrorState error={search.error} onRetry={() => search.refetch()} />
                 : (
                   <EmptyState title="No past trials match all of these criteria"
@@ -134,7 +143,7 @@ export function SearchScreen() {
       />
 
       <ProjectPickerSheet open={picking} onClose={() => setPicking(false)} onPick={(p) => { setPicking(false); prefill.mutate(p) }} />
-      <CriteriaSheet open={editing} initial={criteria} onClose={() => setEditing(false)}
+      <CriteriaSheet open={editing} initial={criteria} serverErrors={refused} onClose={() => setEditing(false)}
         onApply={(c) => { setCriteria(c); setEditing(false); setAllChips(false); setListAll(false) }} />
     </View>
   )

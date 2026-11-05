@@ -33,7 +33,7 @@ function fileExists(uri: string) {
 export function sendOp(op: OpInput): Promise<unknown> {
   switch (op.kind) {
     case 'create_trial':
-      return api<Trial>('/trials/', { body: { id: op.trialId, project: op.project } })
+      return api<Trial>('/trials/', { body: { id: op.trialId, project: op.project, ...(op.castAt ? { cast_at: op.castAt } : {}) } })
     case 'patch_trial':
       return api<Trial>(`/trials/${op.trialId}/`, { method: 'PATCH', body: op.body })
     case 'put_cubes':

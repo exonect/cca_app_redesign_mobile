@@ -130,6 +130,17 @@ it('opens a trial made on this phone before the server has it', async () => {
   expect(mockApi).not.toHaveBeenCalled()
 })
 
+it('shows the trial date and time of a trial made offline: when it was made on the phone (legacy T-33)', async () => {
+  await outbox.enqueue({ kind: 'create_trial', trialId: 'local-8', project: 'p-1', projectName: 'Palava Phase 4 towers', customerName: 'Konkan', castAt: '2026-11-04T04:40:00Z' })
+  mockParams = { id: 'local-8', step: '2' }
+  qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } })
+  qc.setQueryData(['project', 'p-1'], project)
+  await render(<QueryClientProvider client={qc}><TrialScreen /></QueryClientProvider>)
+  expect((await screen.findByLabelText('Trial date, day month year')).props.value).toBe('04/11/2026')
+  expect(screen.getByLabelText('Trial time, 24 hour hours and minutes').props.value).toBe('10:10')
+  expect(screen.getByLabelText('Trial date, day month year').props.editable).toBe(true)
+})
+
 it('stops an offline Start that the server would refuse and lists what is missing, linked to each step', async () => {
   const draft = { ...trial, status: 'draft', code: null, actions: { ...trial.actions, start: true, close: false } } as unknown as Trial
   mockParams = { id: 't-1', step: '1' }

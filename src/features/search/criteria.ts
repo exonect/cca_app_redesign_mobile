@@ -4,17 +4,25 @@
  * the constants here only explain them. Same rules as the web criteria.ts.
  */
 import { AGES } from '@/shared/calc'
+import {
+  combinedGrading, emptySieve, GRADING_MATERIALS, GRADING_SIEVES, readSieve, sieveError, writeSieve, type SieveInput,
+} from '@/shared/searchCriteria'
+
+// Sieve analysis (all in grading) comes from the web's criteria.ts, synced
+// into src/shared by scripts/sync-shared.mjs, so both apps compute it alike.
+export { combinedGrading, emptySieve, GRADING_MATERIALS, GRADING_SIEVES, readSieve, sieveError, writeSieve, type SieveInput }
 
 export const LIST_KEYS = [
   'cement_brand', 'cement_grade', 'grade_of_concrete', 'mineral_admixtures', 'sand_zone',
   'fine_aggregate_source', 'coarse_aggregate_source',
 ] as const
-export const TEXT_KEYS = ['wc', 'cementitious', 'sand_type', 'slump', 'retention_minutes', 'strength_age', 'strength', 'family'] as const
+/** `sieve` holds the sieve analysis table as JSON text (see SieveInput), as on the web. */
+export const TEXT_KEYS = ['wc', 'cementitious', 'sand_type', 'slump', 'retention_minutes', 'strength_age', 'strength', 'family', 'sieve'] as const
 
 type ListKey = (typeof LIST_KEYS)[number]
 type TextKey = (typeof TEXT_KEYS)[number]
 export type Criteria = Record<ListKey, string[]> & Record<TextKey, string>
-export type SearchRequest = Record<string, string | number | string[]>
+export type SearchRequest = Record<string, string | number | string[] | Record<string, string>>
 
 export const WC_TOL = 0.02
 export const SLUMP_TOL = 20
@@ -89,6 +97,8 @@ export function toRequest(c: Criteria): SearchRequest {
     out.strength_age = c.strength_age
     out.strength = strength
   }
+  const grading = combinedGrading(readSieve(c.sieve))
+  if (grading) out.grading = grading
   return out
 }
 
@@ -108,6 +118,8 @@ export function fromServer(raw: Record<string, unknown>): Criteria {
   c.sand_type = list(raw.sand_type)[0] ?? ''
   c.strength_age = list(raw.strength_age)[0] ?? ''
   c.retention_minutes = list(raw.retention_minutes)[0] ?? ''
+  // A project's requirement has no sieve analysis (the web clears it too).
+  c.sieve = ''
   return c
 }
 
@@ -138,7 +150,66 @@ export function validate(c: Criteria): Errors {
   if (c.slump.trim() && c.retention_minutes === '') e.retention_minutes = 'Choose when the slump is measured.'
   if (splitNumbers(c.strength).length && !c.strength_age) e.strength_age = 'Choose the age the strength is for.'
   for (const k of LIST_KEYS) if (c[k].length > LIST_MAX) e[k] = `Use up to ${LIST_MAX} values.`
+  const sieve = sieveError(readSieve(c.sieve))
+  if (sieve) e.sieve = sieve
   return e
+}
+
+/** Where a sieve analysis entry is wrong, so the cell can be marked: the same rule as sieveError, cell by cell. */
+export function badSieveCells(s: SieveInput): { proportions: string[]; passing: Record<string, string[]>; allIn: string[] } {
+  const out = { proportions: [] as string[], passing: {} as Record<string, string[]>, allIn: [] as string[] }
+  for (const m of GRADING_MATERIALS) {
+    if (sieveError({ proportions: { [m.key]: s.proportions[m.key] ?? '' }, passing: {} })) out.proportions.push(m.key)
+    for (const sv of GRADING_SIEVES) {
+      if (sieveError({ proportions: {}, passing: { [m.key]: { [sv.key]: s.passing[m.key]?.[sv.key] ?? '' } } })) {
+        (out.passing[m.key] ??= []).push(sv.key)
+      }
+    }
+  }
+  // Only when every entry is a number does the combined grading say anything.
+  if (!out.proportions.length && !Object.keys(out.passing).length) {
+    out.allIn = Object.entries(combinedGrading(s) ?? {}).filter(([, v]) => Number(v) > 100).map(([k]) => k)
+  }
+  return out
+}
+
+/** Criteria keys the server knows by another name. */
+const SERVER_KEY: Record<string, keyof Criteria> = { grading: 'sieve' }
+
+export type ServerErrors = {
+  /** Messages for the criteria inputs, by criteria key. */
+  fields: Errors
+  /** Messages on the combined all in grading of one sieve, by sieve key ("4.75"). */
+  grading: Record<string, string>
+  /** Messages no input shows. */
+  other: string[]
+}
+
+/**
+ * Lays a 400 from POST /search/ onto the criteria form. Takes the server's
+ * fields by dotted path (fieldErrorsByPath): "wc", "grading" or a per sieve
+ * "grading.4.75". The server checks the combined grading, so a sieve message
+ * marks that sieve's All in value; a "grading" message that names a sieve
+ * ("the 4.75 mm sieve") is placed on it too.
+ */
+export function mapServerErrors(byPath: Record<string, string>): ServerErrors {
+  const out: ServerErrors = { fields: {}, grading: {}, other: [] }
+  const known = new Set<string>([...LIST_KEYS, ...TEXT_KEYS])
+  for (const [path, msg] of Object.entries(byPath)) {
+    if (path === 'grading' || path.startsWith('grading.')) {
+      const rest = path.slice('grading.'.length)
+      const sieve = GRADING_SIEVES.find((sv) => sv.key === rest)
+        ?? (path === 'grading' ? GRADING_SIEVES.find((sv) => msg.includes(`${sv.label} sieve`)) : undefined)
+      if (sieve) out.grading[sieve.key] ??= msg
+      out.fields.sieve ??= msg
+      continue
+    }
+    const top = path.split('.')[0]
+    const key = SERVER_KEY[top] ?? (known.has(top) ? (top as keyof Criteria) : undefined)
+    if (key) out.fields[key] ??= msg
+    else out.other.push(msg)
+  }
+  return out
 }
 
 const ageShort = (age: string) => (AGES[age]?.[0] ?? age).replace(/ days?$/, ' d')
@@ -179,5 +250,6 @@ export function criteriaChips(c: Criteria): { text: string; label: string }[] {
     const f = FAMILIES.find((x) => x.value === c.family)?.label ?? c.family
     add(`${f} only`, `product family, ${f}`)
   }
+  if (combinedGrading(readSieve(c.sieve))) add('All in grading, exact', 'all in grading from the sieve analysis, exact to 2 decimals on every sieve')
   return chips
 }

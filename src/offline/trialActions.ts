@@ -96,9 +96,12 @@ export async function startTrial(qc: QueryClient, trial: Trial): Promise<Saved> 
   return sendOrQueue(qc, { kind: 'start_trial', trialId: trial.id })
 }
 
-/** A new draft trial with an id made on the phone, so it exists before the server sees it. */
-export async function createTrial(qc: QueryClient, project: Pick<Project, 'id' | 'project_name' | 'customer_name'>): Promise<Saved> {
-  const op: OpInput = { kind: 'create_trial', trialId: newId(), project: project.id, projectName: project.project_name, customerName: project.customer_name }
+/** A new draft trial with an id made on the phone, so it exists before the server sees it.
+ * Its trial date and time default to now (legacy T-33), sent with the create so a
+ * trial made offline keeps the time it was made on the phone, not the sync time. */
+export async function createTrial(qc: QueryClient, project: Pick<Project, 'id' | 'project_name' | 'customer_name'>, now = new Date()): Promise<Saved> {
+  const castAt = new Date(Math.floor(now.getTime() / 1000) * 1000).toISOString().replace('.000Z', 'Z')
+  const op: OpInput = { kind: 'create_trial', trialId: newId(), project: project.id, projectName: project.project_name, customerName: project.customer_name, castAt }
   const saved = await sendOrQueue(qc, op)
   if (!saved.queued) storeResult(qc, op, saved.trial)
   return saved

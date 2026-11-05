@@ -9,24 +9,36 @@ import { Sheet } from '@/features/projects/Sheet'
 
 import {
   emptyCriteria, FAMILIES, MINERALS, minutesLabel, rangeHint, RETENTION_MINUTES, SAND_TYPES, SLUMP_TOL, STRENGTH_AGES,
-  validate, type Criteria, type Errors,
+  validate, type Criteria, type Errors, type ServerErrors,
 } from './criteria'
+import { SieveSection } from './SieveSection'
+
+type Props = {
+  open: boolean; initial: Criteria; onClose: () => void; onApply: (c: Criteria) => void
+  /** A refused search (400), laid on the inputs it is about. */
+  serverErrors?: ServerErrors
+}
 
 /** Edit every criterion. Starts from the applied criteria each time it opens. */
-export function CriteriaSheet(props: { open: boolean; initial: Criteria; onClose: () => void; onApply: (c: Criteria) => void }) {
+export function CriteriaSheet(props: Props) {
   return <Body_ key={props.open ? 'open' : 'closed'} {...props} />
 }
 
-function Body_({ open, initial, onClose, onApply }: { open: boolean; initial: Criteria; onClose: () => void; onApply: (c: Criteria) => void }) {
+function Body_({ open, initial, onClose, onApply, serverErrors }: Props) {
   const [c, setC] = useState<Criteria>(initial)
-  const [errors, setErrors] = useState<Errors>({})
+  const [errors, setErrors] = useState<Errors>(serverErrors?.fields ?? {})
+  const [gradingErrors, setGradingErrors] = useState<Record<string, string>>(serverErrors?.grading ?? {})
+  const [other, setOther] = useState<string[]>(serverErrors?.other ?? [])
   const set = <K extends keyof Criteria>(k: K, v: Criteria[K]) => {
     setC((d) => ({ ...d, [k]: v }))
     setErrors((e) => ({ ...e, [k]: undefined }))
+    if (k === 'sieve') setGradingErrors({})
   }
   const apply = () => {
     const e = validate(c)
     setErrors(e)
+    setGradingErrors({})
+    setOther([])
     if (!Object.values(e).some(Boolean)) onApply(c)
   }
   const slumpN = Number(c.slump)
@@ -40,11 +52,12 @@ function Body_({ open, initial, onClose, onApply }: { open: boolean; initial: Cr
   return (
     <Sheet open={open} onClose={onClose} title="Criteria" tall
       footer={<>
-        <Button title="Clear criteria" variant="tertiary" onPress={() => { setC(emptyCriteria()); setErrors({}) }} />
+        <Button title="Clear criteria" variant="tertiary" onPress={() => { setC(emptyCriteria()); setErrors({}); setGradingErrors({}); setOther([]) }} />
         <Button title="Search products" variant="primary" onPress={apply} />
       </>}>
       <Small>Leave a field blank to ignore it. Every criterion you set must match.</Small>
       {errorCount ? <Banner tone="error">{errorCount === 1 ? '1 criterion needs' : `${errorCount} criteria need`} attention.</Banner> : null}
+      {other.map((m) => <Banner key={m} tone="error">{m}</Banner>)}
 
       <Group title="Cement">
         <LookupMulti category="cement_brand" label="Cement brand" noun="cement brand" value={c.cement_brand} error={errors.cement_brand} onChange={(v) => set('cement_brand', v)} />
@@ -115,6 +128,8 @@ function Body_({ open, initial, onClose, onApply }: { open: boolean; initial: Cr
       <Group title="Product family">
         <Chips label="Product family" single options={FAMILIES} value={[c.family]} onChange={(v) => set('family', v[0] ?? '')} />
       </Group>
+
+      <SieveSection value={c.sieve} error={errors.sieve} serverGrading={gradingErrors} onChange={(v) => set('sieve', v)} />
     </Sheet>
   )
 }

@@ -204,6 +204,7 @@ describe('project screen', () => {
     const start = await screen.findByRole('button', { name: 'Start trial 1' })
     await fireEvent.press(start)
     await waitFor(() => expect(mockPush).toHaveBeenCalledWith('/trial/t-new'))
-    expect(mockApi).toHaveBeenCalledWith('/trials/', { body: { project: 'p1' } })
+    // The trial date and time default to now (legacy T-33).
+    expect(mockApi).toHaveBeenCalledWith('/trials/', { body: { project: 'p1', cast_at: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/) } })
   })
 })

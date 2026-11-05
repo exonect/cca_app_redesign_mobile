@@ -69,7 +69,7 @@ export function draftTrial(op: Extract<Op, { kind: 'create_trial' }>, project?: 
     id: op.trialId, code: null, project: op.project,
     project_name: project?.project_name ?? op.projectName, customer_name: project?.customer_name ?? op.customerName,
     status: 'draft' as TrialStatus, status_label: 'Draft', outcome: '', outcome_label: '', product: null, grade: null,
-    cast_at: null, free_wc: null, strength_28d: null, created_by_name: null, created_at: op.createdAt, updated_at: op.createdAt,
+    cast_at: op.castAt ?? null, free_wc: null, strength_28d: null, created_by_name: null, created_at: op.createdAt, updated_at: op.createdAt,
     grade_of_concrete: null, sieves: {}, proportions: {}, batch_size: null, admixture_1: null, dosage_1: null, admixture_2: null, dosage_2: null,
     materials: {}, fresh_test: '', fresh_readings: {}, fresh_density: null, bleeding: null, setting: null, scc: {},
     remarks: '', signatory_sales: '', signatory_site_qc: '', signatory_rd: '', signature_sales: '', signature_site_qc: '', signature_rd: '',
