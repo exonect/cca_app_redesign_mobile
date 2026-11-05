@@ -306,7 +306,7 @@ export function mixProblems(f: MixForm, status?: Trial['status']): Record<string
     if (msg) out[k] = msg
     else if (!blank(f[k]) && blank(f[product])) out[k] = 'Choose the product before entering its dosage.'
   }
-  const batch = decimalProblem(f.batch_size, { label: 'the batch size', min: 0, decimals: 3, maxDigits: 6 })
+  const batch = decimalProblem(f.batch_size, { label: 'the batch size', min: 0, decimals: 4, maxDigits: 7 })
   if (batch) out.batch_size = batch
   for (const m of MATERIALS) {
     const x = f.materials[m]
@@ -426,9 +426,9 @@ export function freshProblems(f: FreshForm): Record<string, string> {
       break
     }
   }
-  const density = decimalProblem(f.fresh_density, { label: 'the density', min: 0, decimals: 1, maxDigits: 6 })
+  const density = decimalProblem(f.fresh_density, { label: 'the density', min: 0, decimals: 4, maxDigits: 9 })
   if (density) out.fresh_density = density
-  const temp = decimalProblem(f.site_temp, { label: 'the site temperature', min: 0, decimals: 2, maxDigits: 5 })
+  const temp = decimalProblem(f.site_temp, { label: 'the site temperature', min: 0, decimals: 4, maxDigits: 7 })
   if (temp) out.site_temp = temp
   return out
 }

@@ -70,23 +70,24 @@ describe('mix design', () => {
 })
 
 describe('fresh concrete', () => {
-  it('needs readings of 0 or more and a density of 0 or more with 1 decimal; 1000 to 3000 is soft', () => {
+  it('needs readings of 0 or more and a density of 0 or more with up to 4 decimals; 1000 to 3000 is soft', () => {
     const f = freshForm(trial)
     f.readings['120'] = '-5'
-    f.fresh_density = '2450.25'
+    f.fresh_density = '2450.25555'
     expect(freshProblems(f)).toEqual({
       fresh_readings: 'Enter readings in mm as numbers of 0 or more. Check 120 min.',
-      fresh_density: 'Enter the density with up to 1 decimal place.',
+      fresh_density: 'Enter the density with up to 4 decimal places.',
     })
     const legacy = { ...f, readings: { ...f.readings, 120: '150' }, fresh_density: '245' }
     expect(freshProblems(legacy)).toEqual({})
     expect(freshSoftWarnings(legacy).fresh_density).toBe('Fresh wet density 245 kg/m³ is below the usual 1000 kg/m³. Check it. Saved as entered.')
   })
 
-  it('takes the site temperature (0 or more, 2 decimals; above 60 °C is soft)', () => {
+  it('takes the site temperature (0 or more, up to 4 decimals; above 60 °C is soft)', () => {
     const f = { ...freshForm(trial), site_temp: '-2' }
     expect(freshProblems(f).site_temp).toBe('Enter the site temperature from 0 up.')
-    expect(freshProblems({ ...f, site_temp: '32.555' }).site_temp).toBe('Enter the site temperature with up to 2 decimal places.')
+    expect(freshProblems({ ...f, site_temp: '32.55555' }).site_temp).toBe('Enter the site temperature with up to 4 decimal places.')
+    expect(freshProblems({ ...f, site_temp: '32.555' })).toEqual({})
     expect(freshProblems({ ...f, site_temp: '65' })).toEqual({})
     expect(freshSoftWarnings({ ...f, site_temp: '65' }).site_temp).toBe('Site temperature 65 °C is above the usual 60 °C. Check it. Saved as entered.')
     expect(freshPayload({ ...f, site_temp: ' 31.5 ' }).site_temp).toBe('31.5')
