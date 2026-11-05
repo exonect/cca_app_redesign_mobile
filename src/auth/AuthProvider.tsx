@@ -71,10 +71,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Resume a saved session on launch. Only the server refusing it signs the
   // person out. No connection opens the app with the data saved on this
   // phone (to work offline on site) or, with nothing saved, offers Retry.
-  const resume = useCallback(async () => {
-    setStatus('loading')
-    setError(null)
-    if (await session.refreshToken()) {
+  // `restore` is the work; on launch the state already says loading, and Retry
+  // (resume) shows loading first.
+  const restore = useCallback(async (refreshToken: string | null) => {
+    if (refreshToken) {
       try {
         setUser(await api<User>('/auth/me/'))
         setOffline(false)
@@ -98,7 +98,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     setStatus('signed_out')
   }, [])
-  useEffect(() => { void resume() }, [resume])
+  const resume = useCallback(async () => {
+    setStatus('loading')
+    setError(null)
+    await restore(await session.refreshToken())
+  }, [restore])
+  // The saved token is read first; everything after it happens once that answer is in.
+  useEffect(() => { void session.refreshToken().then(restore) }, [restore])
 
   // Opened offline: once the server can be reached, confirm the session and
   // refresh the user (an ended session signs out through onExpired).

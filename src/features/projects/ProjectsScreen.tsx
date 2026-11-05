@@ -1,5 +1,5 @@
 import { router, useLocalSearchParams } from 'expo-router'
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { ActivityIndicator, FlatList, Pressable, ScrollView, Text, View } from 'react-native'
 
 import { useAuth } from '@/auth/AuthProvider'
@@ -19,7 +19,12 @@ export function ProjectsScreen() {
   const [status, setStatus] = useState<ProjectStatus | ''>((params.status as ProjectStatus) ?? '')
   const [text, setText] = useState('')
   const search = useDebounced(text.trim(), 300)
-  useEffect(() => { if (params.status !== undefined) setStatus(params.status as ProjectStatus) }, [params.status])
+  // A link with ?status= (from My work) sets the filter; adjusted during render when it changes.
+  const [linked, setLinked] = useState(params.status)
+  if (params.status !== linked) {
+    setLinked(params.status)
+    if (params.status !== undefined) setStatus(params.status as ProjectStatus)
+  }
 
   const base = { search: search || undefined }
   const pipeline = usePipeline(base)

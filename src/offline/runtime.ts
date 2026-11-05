@@ -60,7 +60,14 @@ export async function warmOfflineCache(qc: QueryClient, user: Pick<User, 'role'>
 /** True once the saved data for this user is back in the cache (so screens open with it). */
 export function useOfflineRuntime(qc: QueryClient, user: User | null): boolean {
   const userId = user?.id ?? null
-  const [ready, setReady] = useState(false)
+  // The user whose saved data is back in the cache. A different person (or signing
+  // out) makes it stale at once, worked out during render rather than in an effect.
+  const [readyFor, setReadyFor] = useState<number | null>(null)
+  const [seen, setSeen] = useState(userId)
+  if (seen !== userId) {
+    setSeen(userId)
+    setReadyFor(null)
+  }
 
   useEffect(() => {
     bindQueryClient(qc)
@@ -70,7 +77,7 @@ export function useOfflineRuntime(qc: QueryClient, user: User | null): boolean {
   }, [qc])
 
   useEffect(() => {
-    if (!user) { outbox.setUser(null); setReady(false); return }
+    if (!user) { outbox.setUser(null); return }
     let cancelled = false
     let persister: ReturnType<typeof persistOnChange> | null = null
     let lastWarm = 0
@@ -89,7 +96,7 @@ export function useOfflineRuntime(qc: QueryClient, user: User | null): boolean {
       outbox.setUser(user.id)
       if (!outbox.loaded) await outbox.load().catch(() => undefined)
       if (cancelled) return
-      setReady(true)
+      setReadyFor(user.id)
       kick()
       warm()
     })()
@@ -122,5 +129,5 @@ export function useOfflineRuntime(qc: QueryClient, user: User | null): boolean {
     // The user object changes on every /auth/me/ refresh; only a different person restarts this.
   }, [qc, userId]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  return ready || !user
+  return !user || (readyFor !== null && readyFor === userId)
 }

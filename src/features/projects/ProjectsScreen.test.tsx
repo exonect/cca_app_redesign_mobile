@@ -5,9 +5,10 @@ import { api } from '@/api/client'
 
 import { ProjectsScreen } from './ProjectsScreen'
 
+let mockParams: { status?: string } = {}
 jest.mock('expo-router', () => ({
   router: { push: jest.fn(), replace: jest.fn(), back: jest.fn(), navigate: jest.fn() },
-  useLocalSearchParams: () => ({}),
+  useLocalSearchParams: () => mockParams,
 }))
 jest.mock('react-native-safe-area-context', () => require('react-native-safe-area-context/jest/mock').default)
 jest.mock('@/auth/AuthProvider', () => ({
@@ -34,5 +35,22 @@ it('lists projects newest created first, shows the created date and searches Sal
     query: expect.objectContaining({ ordering: '-created_at' }),
   })))
   expect(screen.getByPlaceholderText('Search project, customer, SFDC, Sales Person or CT')).toBeTruthy()
+  qc.clear()
+})
+
+it('takes the status filter from a link, and follows a new one (lint fix: set during render)', async () => {
+  mockApi.mockImplementation(async (path: string) => {
+    if (path === '/projects/pipeline/') return { stages: [], projects: 1, potential_cr: '0.90' } as never
+    return { count: 1, next: null, previous: null, results: [row] } as never
+  })
+  mockParams = { status: 'support_requested' }
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } })
+  const ui = () => <QueryClientProvider client={qc}><ProjectsScreen /></QueryClientProvider>
+  const { rerender } = await render(ui())
+  await waitFor(() => expect(mockApi).toHaveBeenCalledWith('/projects/', expect.objectContaining({ query: expect.objectContaining({ status: 'support_requested' }) })))
+  mockParams = { status: 'assigned_to_ct' }
+  await rerender(ui())
+  await waitFor(() => expect(mockApi).toHaveBeenCalledWith('/projects/', expect.objectContaining({ query: expect.objectContaining({ status: 'assigned_to_ct' }) })))
+  mockParams = {}
   qc.clear()
 })

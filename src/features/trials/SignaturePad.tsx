@@ -1,13 +1,13 @@
 /**
- * Signature pad: draw with a finger (PanResponder strokes as SVG paths),
+ * Signature pad: draw with a finger (responder strokes as SVG paths),
  * then the pad view is captured to a PNG with react-native-view-shot and
  * handed back as a data URI (data:image/png;base64,...), the format the API
  * stores. An existing signature shows as an image until it is cleared. The
  * capture is a fixed 360 x 140 px so the PNG stays well under the server's
  * size limit. The parent ScrollView stops scrolling while a finger draws.
  */
-import { useMemo, useRef, useState, type ComponentRef } from 'react'
-import { Image, PanResponder, Text, View, findNodeHandle } from 'react-native'
+import { useRef, useState, type ComponentRef } from 'react'
+import { Image, Text, View, findNodeHandle, type GestureResponderEvent } from 'react-native'
 import Svg, { Path } from 'react-native-svg'
 import { captureRef } from 'react-native-view-shot'
 
@@ -35,14 +35,10 @@ export function SignaturePad({ label, value, onChange, disabled, onDrawing }: {
   onDrawing?: (drawing: boolean) => void
 }) {
   const pad = useRef<ComponentRef<typeof View>>(null)
-  const [strokes, setStrokes] = useState<[number, number][][]>([])
-  const current = useRef<[number, number][]>([])
-  const [, redraw] = useState(0)
+  // Finished strokes and the one being drawn, in one state so a release moves it over in one update.
+  const [ink, setInk] = useState<{ strokes: [number, number][][]; current: [number, number][] }>({ strokes: [], current: [] })
   const [problem, setProblem] = useState<string | null>(null)
   const size = useRef({ w: WIDTH, h: HEIGHT })
-  // The responder is built once; it reads the latest callbacks through refs.
-  const latest = useRef({ onChange, onDrawing })
-  latest.current = { onChange, onDrawing }
 
   async function capture() {
     try {
@@ -55,50 +51,45 @@ export function SignaturePad({ label, value, onChange, disabled, onDrawing }: {
         setProblem('This signature image is too large. Clear it and sign again.')
         return
       }
-      latest.current.onChange(uri)
+      onChange(uri)
       setProblem(null)
     } catch {
       setProblem('The signature could not be saved. Clear it and sign again.')
     }
   }
 
-  const responder = useMemo(() => PanResponder.create({
-    onStartShouldSetPanResponder: () => !disabled,
-    onMoveShouldSetPanResponder: () => !disabled,
-    onPanResponderTerminationRequest: () => false,
-    onPanResponderGrant: (e) => {
-      latest.current.onDrawing?.(true)
-      current.current = [[e.nativeEvent.locationX, e.nativeEvent.locationY]]
-      redraw((x) => x + 1)
+  // The View responder props (what PanResponder wraps): a finger down starts a
+  // stroke, moves inside the pad extend it, lifting it finishes the stroke.
+  const handlers = disabled ? {} : {
+    onStartShouldSetResponder: () => true,
+    onMoveShouldSetResponder: () => true,
+    onResponderTerminationRequest: () => false,
+    onResponderGrant: (e: GestureResponderEvent) => {
+      onDrawing?.(true)
+      const point: [number, number] = [e.nativeEvent.locationX, e.nativeEvent.locationY]
+      setInk((i) => ({ ...i, current: [point] }))
     },
-    onPanResponderMove: (e) => {
+    onResponderMove: (e: GestureResponderEvent) => {
       const { locationX: x, locationY: y } = e.nativeEvent
       if (x < 0 || y < 0 || x > size.current.w || y > size.current.h) return
-      current.current.push([x, y])
-      redraw((v) => v + 1)
+      setInk((i) => ({ ...i, current: [...i.current, [x, y]] }))
     },
-    onPanResponderRelease: () => {
-      latest.current.onDrawing?.(false)
-      const done = current.current
-      current.current = []
-      if (done.length) {
-        setStrokes((s) => [...s, done])
-        // Capture once the finished stroke has been drawn on screen.
-        setTimeout(() => { capture() }, 60)
-      }
+    onResponderRelease: () => {
+      onDrawing?.(false)
+      setInk((i) => (i.current.length ? { strokes: [...i.strokes, i.current], current: [] } : i))
+      // Capture once the finished stroke has been drawn on screen.
+      setTimeout(() => { void capture() }, 60)
     },
-    onPanResponderTerminate: () => { latest.current.onDrawing?.(false) },
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [disabled])
+    onResponderTerminate: () => { onDrawing?.(false) },
+  }
 
   function clear() {
-    setStrokes([])
-    current.current = []
+    setInk({ strokes: [], current: [] })
     setProblem(null)
     onChange('')
   }
 
-  const inked = strokes.length > 0 || current.current.length > 0
+  const inked = ink.strokes.length > 0 || ink.current.length > 0
   const showSaved = !!value && !inked
 
   return (
@@ -111,9 +102,9 @@ export function SignaturePad({ label, value, onChange, disabled, onDrawing }: {
           <View ref={pad} collapsable={false} accessible accessibilityRole="image"
             accessibilityLabel={disabled ? `Signature of ${label}, not signed` : `Signature pad for ${label}. Draw with your finger to sign.`}
             onLayout={(e) => { size.current = { w: e.nativeEvent.layout.width, h: e.nativeEvent.layout.height } }}
-            style={{ flex: 1, backgroundColor: color.surface }} {...(disabled ? {} : responder.panHandlers)}>
+            style={{ flex: 1, backgroundColor: color.surface }} {...handlers}>
             <Svg width="100%" height="100%">
-              {[...strokes, current.current].filter((s) => s.length).map((s, i) => (
+              {[...ink.strokes, ink.current].filter((s) => s.length).map((s, i) => (
                 <Path key={i} d={strokePath(s)} stroke={color.ink} strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round" fill="none" />
               ))}
             </Svg>

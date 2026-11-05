@@ -30,7 +30,7 @@ export function SignInScreen() {
         <Body style={{ color: color.muted }}>Use your Thermax Microsoft account. Your role and projects load automatically.</Body>
         {error ? <Banner tone="error">{error}</Banner> : null}
         <Button variant="primary" title="Sign in with Microsoft" busy={busy} onPress={signInWithMicrosoft} />
-        <Small>Can't get in? Your account may not be set up in CCA yet. Ask your CCA admin to add you, then sign in again.</Small>
+        <Small>{"Can't get in? Your account may not be set up in CCA yet. Ask your CCA admin to add you, then sign in again."}</Small>
         {DEV_LOGIN ? (
           <View style={{ gap: 10, borderTopWidth: 1, borderColor: color.line, paddingTop: 14 }}>
             <Field label="Sign in for testing" hint="Test builds only. Enter the email of a CCA user.">

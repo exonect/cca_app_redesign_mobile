@@ -143,8 +143,6 @@ function Workspace({ trial, project, projectError, step, synced }: {
   const needed = stillNeeded(trial, synced)
   const [knownAtRefusal, setKnownAtRefusal] = useState<ReadonlySet<string>>(() => new Set())
   const startingNow = useRef(false)
-  const trialRef = useRef(trial)
-  trialRef.current = trial
   const startTrial = useCallback(async () => {
     // One start at a time: saving first takes a moment, and a second tap must not start twice.
     if (startingNow.current) return
@@ -154,7 +152,8 @@ function Workspace({ trial, project, projectError, step, synced }: {
     try {
       if (registry.isDirty() && !(await saveAll())) return
       // Offline the start is kept on the phone; the trial gets its number when it syncs.
-      const { trial: t, queued } = await startOrQueue(qc, trialRef.current)
+      // The trial as it is now (a save just above may have changed it), not as this render saw it.
+      const { trial: t, queued } = await startOrQueue(qc, currentView(qc, trial.id) ?? trial)
       setMissing(null)
       if (queued) notify({ tone: 'info', text: queuedNote('Trial started') + ' It gets its number then.' })
       else {
@@ -166,7 +165,7 @@ function Workspace({ trial, project, projectError, step, synced }: {
       if (Object.keys(f).length > 1 || (Object.keys(f).length === 1 && !f.cast_at)) {
         // Legacy Create Trial rules: list everything still missing, each linked to its step.
         if (f.cast_at) setCastError(f.cast_at)
-        const now = currentView(qc, trialRef.current.id) ?? trialRef.current
+        const now = currentView(qc, trial.id) ?? trial
         setKnownAtRefusal(new Set(stillNeeded(now, synced).map((n) => n.field)))
         setMissing(Object.entries(f).map(([field, message]) => ({ field, message })))
         notify({ tone: 'error', text: 'The trial cannot start yet. What is missing is listed at the top.' })
@@ -182,7 +181,7 @@ function Workspace({ trial, project, projectError, step, synced }: {
       startingNow.current = false
       setStarting(false)
     }
-  }, [registry, saveAll, qc, accept, notify, step, switchTo, reload, synced])
+  }, [registry, saveAll, qc, accept, notify, step, switchTo, reload, synced, trial])
 
   // Legacy: an Admin deletes a trial of any status, after confirming. Online only.
   const [deleting, setDeleting] = useState(false)
