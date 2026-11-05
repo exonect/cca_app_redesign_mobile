@@ -66,6 +66,8 @@ export function FreshStep({ readOnly, banners }: { readOnly: boolean; banners: R
     ...f, scc_tests: f.scc_tests.filter((x) => x !== k), scc: { ...f.scc, [k]: Object.fromEntries(READING_MINUTES.map((m) => [m, ''])) },
   }))
   const available = SCC_TESTS.filter((t) => !form.scc_tests.includes(t.key))
+  // The SCC message not shown in a test's own table (that test is not on the form).
+  const sccError = errors.scc ?? SCC_TESTS.filter((t) => !form.scc_tests.includes(t.key)).map((t) => errors[`scc.${t.key}`]).find(Boolean)
 
   const label = form.fresh_test === 'flow' ? 'Flow' : 'Slump'
   const target = requirementTargets(project).retention
@@ -114,7 +116,7 @@ export function FreshStep({ readOnly, banners }: { readOnly: boolean; banners: R
                   <Picker label={`${label} at ${m === '0' ? 'batching' : `${m} minutes`} in millimetres${hit && target ? `, target ${num(target.mm)} plus or minus ${SLUMP_TOLERANCE}` : ''}`}
                     placeholder="–" value={sccValue(slumpChoices(slumpSorted, form.readings[m]), form.readings[m])}
                     options={slumpChoices(slumpSorted, form.readings[m])} disabled={readOnly}
-                    invalid={outOfRange(form.readings[m], LIMITS.reading)} onChange={(x) => setReading(m, x ?? '')} />
+                    invalid={outOfRange(form.readings[m], LIMITS.reading) || !!errors[`fresh_readings.${m}`]} onChange={(x) => setReading(m, x ?? '')} />
                 </View>
                 <Text style={{ fontFamily: font.regular, fontSize: 13, color: color.muted }}>mm</Text>
               </View>
@@ -147,17 +149,18 @@ export function FreshStep({ readOnly, banners }: { readOnly: boolean; banners: R
                 <Text style={{ flex: 1, fontFamily: font.semibold, fontSize: 15, color: color.ink }}>{readingLabel(m)}</Text>
                 <View style={{ width: 150 }}>
                   <Picker label={`${t.label} at ${readingLabel(m).toLowerCase()}`} placeholder="–" value={sccValue(options, form.scc[t.key][m])}
-                    options={options} disabled={readOnly} onChange={(v) => setScc(t.key, m, v ?? '')} />
+                    options={options} disabled={readOnly} invalid={!!errors[`scc.${t.key}.${m}`]} onChange={(v) => setScc(t.key, m, v ?? '')} />
                 </View>
               </View>
             )
           })}
-          <View style={{ paddingHorizontal: 16, paddingVertical: 8 }}>
+          <View style={{ paddingHorizontal: 16, paddingVertical: 8, gap: 4 }}>
+            {errors[`scc.${t.key}`] ? <Text accessibilityLiveRegion="polite" style={{ fontFamily: font.regular, fontSize: 13, color: color.error }}>{errors[`scc.${t.key}`]}</Text> : null}
             <WarnText items={READING_MINUTES.map((m) => warns[`scc.${t.key}.${m}`])} />
           </View>
         </Section>
       ))}
-      {errors.scc ? <Text accessibilityLiveRegion="polite" style={{ fontFamily: font.regular, fontSize: 13, color: color.error }}>{errors.scc}</Text> : null}
+      {sccError ? <Text accessibilityLiveRegion="polite" style={{ fontFamily: font.regular, fontSize: 13, color: color.error }}>{sccError}</Text> : null}
       {!readOnly && available.length > 0 ? (
         <Field label="Concrete properties" hint={`V funnel, T500, L box and U box, read at each time like the ${label.toLowerCase()}.`}>
           <Picker label="Add a self compacting test" placeholder="Add a self compacting test" value={null}
@@ -167,7 +170,7 @@ export function FreshStep({ readOnly, banners }: { readOnly: boolean; banners: R
 
       <Section label="Density and observations">
         <Field label="Fresh wet density" error={errors.fresh_density}>
-          <TextField accessibilityLabel="Fresh wet density, kilograms per cubic metre" unit="kg/m³" keyboardType="number-pad" inputMode="numeric"
+          <TextField accessibilityLabel="Fresh wet density, kilograms per cubic metre" unit="kg/m³" keyboardType="decimal-pad" inputMode="decimal"
             value={form.fresh_density} editable={!readOnly} invalid={!!errors.fresh_density}
             onChangeText={(v) => set('fresh_density', v)} style={{ textAlign: 'right' }} />
         </Field>

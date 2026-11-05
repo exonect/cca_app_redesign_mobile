@@ -16,7 +16,7 @@ import { errorMessage } from '@/api/errors'
 import { isOnline } from '@/offline/connectivity'
 import { labelsFrom, outbox, useTrialOps } from '@/offline/outbox'
 import { trialView } from '@/offline/overlay'
-import { startTrial as startOrQueue } from '@/offline/trialActions'
+import { currentView, startTrial as startOrQueue } from '@/offline/trialActions'
 import { NotOnPhone, TrialSyncNote } from '@/offline/ui'
 import { FlagBanner } from '@/features/flags/FlagBanner'
 import type { FieldNote, Project, Trial } from '@/shared/types'
@@ -138,6 +138,10 @@ function Workspace({ trial, project, projectError, step, synced }: {
 
   const [starting, setStarting] = useState(false)
   const [missing, setMissing] = useState<FieldNote[] | null>(null)
+  // What this phone itself counted as still needed when Start was refused: those items leave the
+  // list once a save fills them in; anything else the server listed stays until Start is tried again.
+  const needed = stillNeeded(trial, synced)
+  const [knownAtRefusal, setKnownAtRefusal] = useState<ReadonlySet<string>>(() => new Set())
   const startingNow = useRef(false)
   const trialRef = useRef(trial)
   trialRef.current = trial
@@ -162,6 +166,8 @@ function Workspace({ trial, project, projectError, step, synced }: {
       if (Object.keys(f).length > 1 || (Object.keys(f).length === 1 && !f.cast_at)) {
         // Legacy Create Trial rules: list everything still missing, each linked to its step.
         if (f.cast_at) setCastError(f.cast_at)
+        const now = currentView(qc, trialRef.current.id) ?? trialRef.current
+        setKnownAtRefusal(new Set(stillNeeded(now, synced).map((n) => n.field)))
         setMissing(Object.entries(f).map(([field, message]) => ({ field, message })))
         notify({ tone: 'error', text: 'The trial cannot start yet. What is missing is listed at the top.' })
       } else if (f.cast_at) {
@@ -176,7 +182,7 @@ function Workspace({ trial, project, projectError, step, synced }: {
       startingNow.current = false
       setStarting(false)
     }
-  }, [registry, saveAll, qc, accept, notify, step, switchTo, reload])
+  }, [registry, saveAll, qc, accept, notify, step, switchTo, reload, synced])
 
   // Legacy: an Admin deletes a trial of any status, after confirming. Online only.
   const [deleting, setDeleting] = useState(false)
@@ -244,14 +250,21 @@ function Workspace({ trial, project, projectError, step, synced }: {
       onDelete={trial.actions.delete ? confirmDelete : undefined} deleting={deleting} />
   )
 
+  // A refused Start's list keeps only what is still missing: each item goes once a save fills it in.
+  const neededKey = needed.map((n) => n.field).join('|')
+  const open = useMemo(() => {
+    const now = new Set(neededKey.split('|'))
+    const left = missing?.filter((m) => !knownAtRefusal.has(m.field) || now.has(m.field)) ?? []
+    return left.length ? left : null
+  }, [missing, neededKey, knownAtRefusal])
+
   const value: WorkspaceValue = useMemo(() => ({
     trial, project, step, header, accept, report: registry.report, remove: registry.remove, dirty: registry.dirty,
-    isDirty: registry.isDirty, saving, saveAll, goTo, next, startTrial, starting, missing, setMissing, castError, setCastError,
+    isDirty: registry.isDirty, saving, saveAll, goTo, next, startTrial, starting, missing: open, setMissing, castError, setCastError,
     notice, notify,
-  }), [trial, project, step, header, accept, registry, saving, saveAll, goTo, next, startTrial, starting, missing, castError, notice, notify])
+  }), [trial, project, step, header, accept, registry, saving, saveAll, goTo, next, startTrial, starting, open, castError, notice, notify])
 
   const readOnly = !trial.actions.edit
-  const needed = stillNeeded(trial, synced)
   const banners = (
     <>
       <TrialSyncNote trialId={trial.id} />
@@ -264,13 +277,13 @@ function Workspace({ trial, project, projectError, step, synced }: {
           This trial is in progress, so its steps are read only, as in the old app.{trial.actions.close ? ' Add cube results and files, then close it with a conclusion in step 5.' : ''}
         </Banner>
       )}
-      {trial.status === 'draft' && trial.actions.start && !missing && (
+      {trial.status === 'draft' && trial.actions.start && !open && (
         <Banner tone="info">
           This trial is a draft. Complete it, then start the trial to give it a number.
           {needed.length ? ` Still needed before it can start: ${needed.length} ${needed.length === 1 ? 'item' : 'items'}, listed when you tap Start trial.` : ''}
         </Banner>
       )}
-      {missing && trial.status === 'draft' ? <MissingList missing={missing} onGo={(n) => goTo(n)} onClose={() => setMissing(null)} /> : null}
+      {open && trial.status === 'draft' ? <MissingList missing={open} onGo={(n) => goTo(n)} onClose={() => setMissing(null)} /> : null}
       {projectError && <Banner tone="warn">The customer requirement could not be loaded. Results are still checked on the server.</Banner>}
     </>
   )
@@ -292,7 +305,7 @@ function Workspace({ trial, project, projectError, step, synced }: {
 /** A refused Start: everything still missing, each linked to its step (legacy Create Trial rules). */
 function MissingList({ missing, onGo, onClose }: { missing: FieldNote[]; onGo: (n: StepNo) => void; onClose: () => void }) {
   return (
-    <View accessibilityRole="alert" style={{ backgroundColor: '#FBECEB', borderRadius: 10, padding: 12, gap: 6 }}>
+    <View accessibilityRole="alert" accessibilityLiveRegion="polite" style={{ backgroundColor: '#FBECEB', borderRadius: 10, padding: 12, gap: 6 }}>
       <Text accessibilityRole="header" style={{ fontFamily: font.semibold, fontSize: 15, color: '#7A1A14' }}>The trial cannot start yet</Text>
       <Small style={{ color: '#7A1A14' }}>As in the old app, a trial goes In progress only when these are entered:</Small>
       {missing.map((m) => {

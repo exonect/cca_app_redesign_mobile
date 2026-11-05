@@ -96,6 +96,18 @@ describe('sync list', () => {
     expect(await screen.findByText('Everything is synced')).toBeTruthy()
   })
 
+  it('lists everything a refused Start still needs, and says to discard the start to fix the trial (audit round 2)', async () => {
+    mockApi.mockRejectedValueOnce(new ApiError(400, 'invalid', 'Some fields need attention.', {
+      site_temp: ['Site temperature is required.'], 'materials.cement.source': ['Cement brand is required.'],
+    }))
+    await outbox.enqueue({ kind: 'start_trial', trialId: 't1' })
+    await outbox.flush()
+    await wrap(<SyncScreen />)
+    expect(await screen.findByText('Start the trial')).toBeTruthy()
+    expect(screen.getByText('• Site temperature is required.\n• Cement brand is required.')).toBeTruthy()
+    expect(screen.getByText('To fill in what is missing, discard this start, complete the trial, then start it again.')).toBeTruthy()
+  })
+
   it('discards a refused change after confirming', async () => {
     const alert = jest.spyOn(Alert, 'alert')
     await refused()

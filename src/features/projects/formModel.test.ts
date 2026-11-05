@@ -89,4 +89,13 @@ describe('final server rules for projects', () => {
     expect(e.admixture_base).toBeUndefined() // optional
     expect(requiredAfterDraft(EMPTY, true).sales_person).toBe('Sales Person is required once the project is created.')
   })
+
+  it('checks only changes against the saved project, as the server does (audit round 2)', () => {
+    // An imported project with gaps (no cement brands, no prices) stays editable.
+    const saved = { ...EMPTY, customer_name: 'Mula', project_name: 'Palava', selling_basic_price: '' }
+    expect(requiredAfterDraft({ ...saved, remarks: '' }, false, saved)).toEqual({})
+    // Emptying a filled field is still refused, and so is a price change leaving none above zero.
+    expect(requiredAfterDraft({ ...saved, project_name: ' ' }, false, saved)).toEqual({ project_name: 'Project name is required once the project is created.' })
+    expect(requiredAfterDraft({ ...saved, bulk_and_barrel: '0' }, false, saved).selling_basic_price).toBe('Enter a bulk or barrel basic selling price above zero.')
+  })
 })

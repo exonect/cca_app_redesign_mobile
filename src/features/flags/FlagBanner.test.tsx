@@ -112,3 +112,12 @@ describe('a flag on a whole object', () => {
     expect(deepFieldErrors({ fields: { value: ['Proportions must total 100%.'] } })).toEqual({ value: 'Proportions must total 100%.' })
   })
 })
+
+it('reloads the record when the flag was resolved by someone else meanwhile (audit round 2)', async () => {
+  const invalidate = jest.spyOn(qc, 'invalidateQueries').mockClear()
+  mockApi.mockRejectedValueOnce(Object.assign(new Error('This flag is already accepted.'), { status: 409, code: 'not_open', fields: {} }))
+  await show()
+  await fireEvent.press(screen.getByRole('button', { name: 'Accept Dosage as 22' }))
+  expect(await screen.findByText('This flag is already accepted.')).toBeTruthy()
+  expect(invalidate).toHaveBeenCalledWith({ queryKey: ['trial', 't1'] })
+})

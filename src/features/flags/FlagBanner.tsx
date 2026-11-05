@@ -10,7 +10,7 @@ import { useState } from 'react'
 import { View } from 'react-native'
 
 import { api, fieldErrors } from '@/api/client'
-import { errorMessage } from '@/api/errors'
+import { errorMessage, statusOf } from '@/api/errors'
 import { useAuth } from '@/auth/AuthProvider'
 import type { CorrectedValue, RecordFlag } from '@/shared/typesExt'
 import { Banner, Body, Button, Field, NumberField, Small, Strong, TextField } from '@/ui/kit'
@@ -48,21 +48,30 @@ function FlagList({ flags, refresh, what }: Props & { flags: RecordFlag[] }) {
   const kind = correcting ? objectKind(correcting) : null
   const [message, setMessage] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null)
 
-  const done = (text: string) => {
-    setMessage({ tone: 'ok', text })
+  const reload = () => {
     refresh.forEach((key) => { void qc.invalidateQueries({ queryKey: key as unknown[] }) })
     void qc.invalidateQueries({ queryKey: ['data-flags'] })
+  }
+  const done = (text: string) => {
+    setMessage({ tone: 'ok', text })
+    reload()
+  }
+  /** Resolved by someone else meanwhile (409 not_open), or gone (404): show the record as it is now. */
+  const stale = (e: unknown) => {
+    const status = statusOf(e)
+    if (status === 409 || status === 404) reload()
   }
 
   const accept = useMutation({
     mutationFn: (f: RecordFlag) => api(`/data-flags/${f.id}/accept/`, { method: 'POST', body: {} }),
     onSuccess: (_, f) => done(`${f.field_label} kept as ${f.value}.`),
-    onError: (e) => setMessage({ tone: 'error', text: errorMessage(e, 'The flag was not updated. Try again.') }),
+    onError: (e) => { setMessage({ tone: 'error', text: errorMessage(e, 'The flag was not updated. Try again.') }); stale(e) },
   })
   const correct = useMutation({
     mutationFn: ({ f, v }: { f: RecordFlag; v: CorrectedValue }) => api(`/data-flags/${f.id}/correct/`, { method: 'POST', body: { value: v } }),
     onSuccess: (_, { f, v }) => { setCorrecting(null); done(typeof v === 'string' ? `${f.field_label} corrected to ${v}.` : `${f.field_label} corrected.`) },
     onError: (e) => {
+      stale(e)
       const deep = deepFieldErrors(e)
       if (kind && Object.keys(deep).some((k) => k === 'value' || k.startsWith('value.'))) {
         // Per key ({"value": {"river_sand": [...]}}) on its row; whole value (100% total) above the rows.

@@ -166,14 +166,19 @@ export const REQUIRED_AFTER_DRAFT: FormField[] = [
   ...STEP1_REQUIRED, 'wc_ratio_corrected', 'cementitious_contents', 'requirement_type', 'retention_time', 'slump_flow',
   'strength_age', 'sand_type', 'fine_aggregate_source', 'coarse_aggregate_source', 'sand_zone', ...M2M_FIELDS,
 ]
-export function requiredAfterDraft(v: ProjectFormValues, picksSalesPerson: boolean): FormErrors {
+/** `saved`: the project as stored. Like the server, only a change is checked: a field
+ * that was filled may not be emptied, and the prices need one above zero only when
+ * they change, so an imported project with a gap can still be edited elsewhere. */
+export function requiredAfterDraft(v: ProjectFormValues, picksSalesPerson: boolean, saved?: ProjectFormValues): FormErrors {
   const out: FormErrors = {}
+  const empty = (x: unknown) => (Array.isArray(x) ? x.length === 0 : String(x).trim() === '')
   for (const f of REQUIRED_AFTER_DRAFT) {
     if (f === 'sales_person' && !picksSalesPerson) continue
-    const x = v[f]
-    if (Array.isArray(x) ? x.length === 0 : String(x).trim() === '') out[f] = `${LABELS[f]} is required once the project is created.`
+    if (saved && empty(saved[f])) continue
+    if (empty(v[f])) out[f] = `${LABELS[f]} is required once the project is created.`
   }
-  if (priceMissing(v)) out.selling_basic_price = PRICE_MESSAGE
+  const priceChanged = !saved || (['selling_basic_price', 'bulk_and_barrel'] as const).some((f) => v[f].trim() !== saved[f].trim())
+  if (priceChanged && priceMissing(v)) out.selling_basic_price = PRICE_MESSAGE
   return out
 }
 

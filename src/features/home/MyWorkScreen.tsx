@@ -106,7 +106,7 @@ export function MyWorkScreen() {
         ListHeaderComponent={
           <View style={{ gap: 12 }}>
             <Notice text={notice} onDone={clearNotice} />
-            <StatsTiles data={stats.data} admin={hasRole('AD')} />
+            <StatsTiles data={stats.data} admin={hasRole('AD')} error={stats.isError ? stats.error : undefined} onRetry={() => { void stats.refetch() }} />
             {dueCount > 0 ? <DueBanner count={dueCount} names={dueTrials.map((t) => t.project_name)} /> : null}
           </View>
         }

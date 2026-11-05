@@ -212,16 +212,19 @@ export function MixStep({ readOnly, banners }: { readOnly: boolean; banners: Rea
           const cat = sourceCategory(m)
           const unused = (BINDERS.includes(m) || OTHER_MINERALS.includes(m)) && m !== 'cement' && !n(entry.ssd)
           const dose = m === 'admixture_1' ? form.dosage_1 : m === 'admixture_2' ? form.dosage_2 : ''
+          // A server error on this material ("materials.cement.source"), shown on the row even while it is folded.
+          const rowError = Object.entries(errors).find(([k]) => k.startsWith(`materials.${m}.`))?.[1]
           const suggested = admix && n(dose) !== null && binder ? admixtureQty(binder, dose) : null
           return (
             <View key={m} style={{ borderTopWidth: 1, borderColor: color.divider, backgroundColor: expanded ? color.head : color.surface }}>
               <Pressable accessibilityRole="button" accessibilityState={{ expanded }}
-                accessibilityLabel={`${name}, adjusted ${f2(l.adjusted) || 'not entered'} kilograms, batch ${f2(l.batch) || 'not calculated'} kilograms`}
+                accessibilityLabel={`${name}, adjusted ${f2(l.adjusted) || 'not entered'} kilograms, batch ${f2(l.batch) || 'not calculated'} kilograms${rowError ? `. ${rowError}` : ''}`}
                 onPress={() => setOpen(expanded ? null : m)}
                 style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 12, minHeight: 48 }}>
                 <View style={cell('flex')}>
                   <Text numberOfLines={1} style={{ fontFamily: expanded ? font.semibold : font.medium, fontSize: 15, color: color.ink }}>{name}</Text>
-                  {unused ? <Small>Not used in this trial</Small> : admix && !product ? <Small>Choose a product above</Small> : null}
+                  {rowError ? <Small style={{ color: color.error }}>{rowError}</Small>
+                    : unused ? <Small>Not used in this trial</Small> : admix && !product ? <Small>Choose a product above</Small> : null}
                 </View>
                 <Text style={[num16, cell(92)]}>{f2(l.adjusted) || '–'}</Text>
                 <Text style={[num16, cell(76), { color: color.subtle }]}>{f2(l.batch) || '–'}</Text>
@@ -237,7 +240,7 @@ export function MixStep({ readOnly, banners }: { readOnly: boolean; banners: Rea
                     <>
                       <Labeled label="Quantity, kg/m³">
                         <CellInput accessibilityLabel={`${name} quantity, kilograms per cubic metre`} value={entry.ssd} editable={!readOnly}
-                          invalid={outOfRange(entry.ssd, LIMITS.ssd)} warn={!!warns[`materials.${m}.ssd`]} onChangeText={(v) => setMat(m, 'ssd', v)} />
+                          invalid={outOfRange(entry.ssd, LIMITS.ssd) || !!err(`materials.${m}.ssd`)} warn={!!warns[`materials.${m}.ssd`]} onChangeText={(v) => setMat(m, 'ssd', v)} />
                       </Labeled>
                       <Small>{!product ? 'Choose a product above, then enter the quantity used.'
                         : suggested !== null ? `The dosage gives ${f2(suggested)} kg/m³ (dosage % of the binder). Enter the quantity used.`
@@ -247,17 +250,17 @@ export function MixStep({ readOnly, banners }: { readOnly: boolean; banners: Rea
                     <View style={{ flexDirection: 'row', gap: 8 }}>
                       <Labeled label="SSD design, kg">
                         <CellInput accessibilityLabel={`${MATERIAL_LABEL[m]} SSD design, kilograms per cubic metre`} value={entry.ssd} editable={!readOnly}
-                          invalid={outOfRange(entry.ssd, LIMITS.ssd)} warn={!!warns[`materials.${m}.ssd`]} onChangeText={(v) => setMat(m, 'ssd', v)} />
+                          invalid={outOfRange(entry.ssd, LIMITS.ssd) || !!err(`materials.${m}.ssd`)} warn={!!warns[`materials.${m}.ssd`]} onChangeText={(v) => setMat(m, 'ssd', v)} />
                       </Labeled>
                       {agg && (
                         <>
                           <Labeled label="Absorption, %">
                             <CellInput accessibilityLabel={`${MATERIAL_LABEL[m]} absorption, percent`} value={entry.absorption} editable={!readOnly}
-                              invalid={outOfRange(entry.absorption, LIMITS.percent)} onChangeText={(v) => setMat(m, 'absorption', v)} />
+                              invalid={outOfRange(entry.absorption, LIMITS.percent) || !!err(`materials.${m}.absorption`)} onChangeText={(v) => setMat(m, 'absorption', v)} />
                           </Labeled>
                           <Labeled label="Moisture, %">
                             <CellInput accessibilityLabel={`${MATERIAL_LABEL[m]} moisture, percent`} value={entry.moisture} editable={!readOnly}
-                              invalid={outOfRange(entry.moisture, LIMITS.percent)} onChangeText={(v) => setMat(m, 'moisture', v)} />
+                              invalid={outOfRange(entry.moisture, LIMITS.percent) || !!err(`materials.${m}.moisture`)} onChangeText={(v) => setMat(m, 'moisture', v)} />
                           </Labeled>
                         </>
                       )}
@@ -271,15 +274,17 @@ export function MixStep({ readOnly, banners }: { readOnly: boolean; banners: Rea
                   )}
                   {m === 'water' && <Small>Reduced by the free water the aggregates bring in.</Small>}
                   {cat && (
-                    <Field label="Source">
+                    <Field label="Source" error={err(`materials.${m}.source`)}>
                       <Picker label={`${MATERIAL_LABEL[m]} source`} placeholder="Select source" value={entry.source || null} disabled={readOnly}
+                        invalid={!!err(`materials.${m}.source`)}
                         options={withCurrent((lists[cat].data ?? []).map((o) => ({ value: o.value, label: o.value })), entry.source)}
                         onChange={(v) => setSource(m, v ?? '')} />
                     </Field>
                   )}
                   {m === 'cement' && (
-                    <Field label="Type of cement">
+                    <Field label="Type of cement" error={err('materials.cement.cement_type')}>
                       <Picker label="Type of cement" placeholder="Select type" value={entry.cement_type || null} disabled={readOnly}
+                        invalid={!!err('materials.cement.cement_type')}
                         options={withCurrent((lists.cement_grade.data ?? []).map((o) => ({ value: o.value, label: o.value })), entry.cement_type)}
                         onChange={(v) => setMat(m, 'cement_type', v ?? '')} />
                     </Field>

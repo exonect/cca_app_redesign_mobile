@@ -99,7 +99,7 @@ export function SieveEditor({ form, setForm, errors, readOnly, results }: {
         <TableHead cols={['IS sieve', 'Retained, kg', 'Passing, %']} template={COLS} />
         {form.sieves[material].map((row, i) => {
           const out = a.rows.find((r) => r.sieve === row.sieve)
-          const invalid = outOfRange(row.retained, LIMITS.retained)
+          const invalid = outOfRange(row.retained, LIMITS.retained) || !!errors[`sieves.${material}.${i}.retained`] || !!errors[`sieves.${material}.${i}.sieve`]
           return (
             <View key={row.sieve} style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 12, paddingVertical: 2, borderTopWidth: 1, borderColor: color.divider }}>
               <Text style={[{ fontFamily: font.medium, fontSize: 15, color: color.ink }, cell(76)]}>{SIEVE_LABEL[row.sieve]}</Text>
@@ -131,7 +131,7 @@ export function SieveEditor({ form, setForm, errors, readOnly, results }: {
             <View key={m} style={{ width: '47%', flexGrow: 1, gap: 4 }}>
               <Small>{SIEVE_MATERIAL_LABEL[m]}, %</Small>
               <CellInput accessibilityLabel={`${SIEVE_MATERIAL_LABEL[m]} proportion, percent`} value={form.proportions[m]} editable={!readOnly}
-                invalid={outOfRange(form.proportions[m], LIMITS.percent)} onChangeText={(v) => setProportion(m, v)} />
+                invalid={outOfRange(form.proportions[m], LIMITS.percent) || !!errors[`proportions.${m}`]} onChangeText={(v) => setProportion(m, v)} />
             </View>
           ))}
         </View>

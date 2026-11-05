@@ -7,17 +7,19 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { router, useLocalSearchParams, usePreventRemove } from 'expo-router'
 import { useState, type ReactNode } from 'react'
-import { Alert, Text } from 'react-native'
+import { Alert, Text, View } from 'react-native'
 
-import { api, ApiError, fieldErrors } from '@/api/client'
-import { errorMessage } from '@/api/errors'
+import { api, ApiError } from '@/api/client'
+import { statusOf } from '@/api/errors'
+import { NotOnPhone } from '@/offline/ui'
 import type { Project, SieveData } from '@/shared/types'
 import { Banner, Button, ErrorState, Header, Loading, Screen } from '@/ui/kit'
 import { color, font } from '@/ui/theme'
 
 import { shortDateTime } from './format'
-import { sieveForm, sievePayload, sieveProblems, type SieveForm } from './forms'
+import { sieveForm, sievePayload, sieveProblems, stepErrors, type SieveForm } from './forms'
 import { SieveEditor } from './SieveStep'
+import { saveError } from './workspace'
 
 function back(projectId: string) {
   if (router.canGoBack()) router.back()
@@ -37,7 +39,8 @@ export function SieveDataScreen() {
           ? (data.error instanceof ApiError && data.error.status === 404
             ? <Banner tone="error">This project was not found, or you cannot see it.</Banner>
             : <ErrorState error={data.error} onRetry={() => data.refetch()} />)
-          : <Loading label="Loading sieve data" />}
+          // Offline the query waits: say so instead of loading for ever.
+          : data.fetchStatus === 'paused' ? <NotOnPhone what="sieve data" /> : <Loading label="Loading sieve data" />}
       </Screen>
     )
   }
@@ -70,9 +73,12 @@ export function SieveDataForm({ data, header }: { data: SieveData; header: React
       setNotice({ tone: 'ok', text: 'Sieve data saved. New trials of this project start from it.' })
       return true
     } catch (e) {
-      const f = fieldErrors(e)
+      const f = stepErrors(e, sievePayload(form))
       setErrors(f)
-      setNotice({ tone: 'error', text: Object.keys(f).length ? 'Not saved. Fix the highlighted fields and save again.' : errorMessage(e, 'Not saved. Check the connection and try again.') })
+      setNotice({ tone: 'error', text: saveError(e, f, ['sieves', 'proportions']) })
+      // No longer allowed (the project moved on, or access changed): reload so the page turns read only.
+      const status = statusOf(e)
+      if (status === 403 || status === 404 || status === 409) void qc.invalidateQueries({ queryKey: ['sieve-data', data.project] })
       return false
     }
   }
@@ -97,7 +103,7 @@ export function SieveDataForm({ data, header }: { data: SieveData; header: React
           Saved {shortDateTime(data.updated_at)}{data.updated_by ? ` by ${data.updated_by}` : ''}
         </Text>
       ) : null}
-      {notice ? <Banner tone={notice.tone}>{notice.text}</Banner> : null}
+      {notice ? <View accessibilityLiveRegion="polite"><Banner tone={notice.tone}>{notice.text}</Banner></View> : null}
       <SieveEditor form={form} setForm={setForm} errors={errors} readOnly={readOnly} results={!dirty ? data.results : null} />
     </Screen>
   )

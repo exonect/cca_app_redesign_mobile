@@ -239,7 +239,7 @@ function AdminHeaderBack({ title, sub, onBack, children }: { title: string; sub?
   )
 }
 
-function ValueEditor({ category, label, numeric, isCity, initial, submitLabel, onSave, onSaved, onCancel }: {
+export function ValueEditor({ category, label, numeric, isCity, initial, submitLabel, onSave, onSaved, onCancel }: {
   category: string; label: string; numeric: boolean; isCity: boolean; initial?: Value; submitLabel: string
   onSave: (body: { value: string; parent?: number | null }) => Promise<Value>; onSaved: (v: Value) => void; onCancel: () => void
 }) {
@@ -258,6 +258,8 @@ function ValueEditor({ category, label, numeric, isCity, initial, submitLabel, o
     },
   })
   const submit = () => {
+    // The keyboard's Done key submits too, and it is not disabled while saving.
+    if (save.isPending) return
     setErrors({})
     const problem = lookupValueProblem(value, numeric, category)
     if (problem) { setErrors({ value: problem }); return }

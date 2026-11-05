@@ -6,7 +6,8 @@ import { planUploads } from './attachments'
 import { CAST_ERRORS, castParts, isFutureDay } from './castAt'
 import {
   conclusionForm, conclusionProblems, cubePayload, cubeProblem, cubeSoftWarnings, decimalProblem, decimalTotal, freshForm, freshPayload, freshProblems,
-  freshSoftWarnings, mixForm, mixProblems, mixSoftWarnings, sccNumber, SIGNATURE_MAX_CHARS, sieveForm, sieveProblems, sortSlumpList, testedOnDefault, testedOnIso,
+  freshSoftWarnings, mixForm, mixProblems, mixSoftWarnings, pathLabel, sccNumber, SIGNATURE_MAX_CHARS, sieveForm, sieveProblems, sortSlumpList, stepErrors,
+  testedOnDefault, testedOnIso,
 } from './forms'
 import { sccOptions, slumpChoices } from './FreshStep'
 import { mixWarnings } from './MixStep'
@@ -269,5 +270,29 @@ describe('attachments', () => {
     expect(r.upload.map((f) => f.name)).toEqual(['a.pdf', 'b.png'])
     expect(r.problems).toEqual(['A trial can have up to 30 files, so only 2 more can be added. Not added: c.jpg.'])
     expect(planUploads([file('a.pdf')], 30).problems).toEqual(['A trial can have up to 30 files. Remove one first. Not added: a.pdf.'])
+  })
+})
+
+describe('server errors inside JSON fields (audit round 2)', () => {
+  const refused = (fields: Record<string, unknown>) => Object.assign(new Error('Some fields need attention.'), { status: 400, code: 'invalid', fields })
+
+  it('names where a nested error sits, for the summary under the table', () => {
+    const body = { sieves: { '20mm': [{ sieve: '40', retained: '0' }, { sieve: '20', retained: '-1' }] } }
+    const out = stepErrors(refused({ sieves: { '20mm': { 1: { retained: ['Retained weight cannot be negative.'] } } } }), body)
+    expect(out['sieves.20mm.1.retained']).toBe('Retained weight cannot be negative.')
+    expect(out.sieves).toBe('20 mm aggregate, 20 mm sieve: Retained weight cannot be negative.')
+    expect(stepErrors(refused({ materials: { river_sand: { moisture: ['Enter 100% or less.'] } } })).materials)
+      .toBe('River sand moisture: Enter 100% or less.')
+    expect(stepErrors(refused({ scc: { v_funnel: { 30: ['Enter 100000 or less.'] } } })).scc).toBe('V funnel at 30 min: Enter 100000 or less.')
+    expect(stepErrors(refused({ fresh_readings: { 60: ['Readings cannot be negative.'] } })).fresh_readings).toBe('Reading at 60 min: Readings cannot be negative.')
+    expect(stepErrors(refused({ proportions: { crushed_sand: ['Enter 100% or less.'] } })).proportions).toBe('Crushed sand proportion: Enter 100% or less.')
+    expect(stepErrors(refused({ cubes: { 1: { load: ['Ensure this value is less than or equal to 100000.'] } } })).cubes)
+      .toBe('Cube 2 load: Ensure this value is less than or equal to 100000.')
+  })
+
+  it('leaves plain fields and whole field messages as the server wrote them', () => {
+    const out = stepErrors(refused({ dosage_1: ['Choose the product before entering its dosage.'], proportions: ['Proportions must total 100%. They total 90.00%.'] }))
+    expect(out).toEqual({ dosage_1: 'Choose the product before entering its dosage.', proportions: 'Proportions must total 100%. They total 90.00%.' })
+    expect(pathLabel('dosage_1')).toBeNull()
   })
 })

@@ -17,8 +17,8 @@ import { color, font, radius } from '@/ui/theme'
 import { dayText, maskDate } from './castAt'
 import { istDay, shortDate } from './format'
 import {
-  badCubeLoad, badCubeWeight, cubePayload, cubeProblem, cubeRows, cubeSoftWarnings, pct, requirementTargets, softWarning, sortAges, testedOnDefault,
-  testedOnIso, type CubeEntry,
+  badCubeLoad, badCubeWeight, cubePayload, cubeProblem, cubeRows, cubeSoftWarnings, pct, requirementTargets, softWarning, sortAges, stepErrors,
+  testedOnDefault, testedOnIso, type CubeEntry,
 } from './forms'
 import { CellInput, cell, StepFooter, TableHead, WarnText } from './parts'
 import { queuedNote, saveError, useReloadTrial, useSaver, useWorkspace } from './workspace'
@@ -99,7 +99,8 @@ export function CubesStep({ canEdit, banners }: { canEdit: boolean; banners: Rea
       notify(queued ? { tone: 'info', text: queuedNote(`${AGES[age][0]} cube results saved`) } : { tone: 'ok', text: `${AGES[age][0]} cube results saved` })
       return true
     } catch (e) {
-      const fe = fieldErrors(e)
+      // "Cube 2 load: ..." rather than the bare message of a nested error.
+      const fe = Object.fromEntries(Object.entries(stepErrors(e)).filter(([k]) => !k.includes('.')))
       const msg = Object.values(fe)[0] ?? saveError(e, fe)
       setErrors((x) => ({ ...x, [age]: msg }))
       reload(e)

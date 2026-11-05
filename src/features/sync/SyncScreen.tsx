@@ -27,6 +27,23 @@ export function describeOp(op: Op): string {
   }
 }
 
+/** What the server said, in full: a refused Start lists everything still
+ * missing (one line each), not only the first item. */
+export function problemLines(op: Op): string[] {
+  const all = [...new Set(Object.values(op.error?.fields ?? {}).filter((m): m is string => typeof m === 'string' && m !== ''))]
+  if (all.length > 1) return all
+  return [op.error?.message ?? 'The server refused this change.']
+}
+
+/** How to get past the problem when the change itself cannot simply be retried. */
+export function problemHint(op: Op): string | null {
+  // A start waiting here keeps the trial read only on this phone, so it must go before the trial can be completed.
+  if (op.kind === 'start_trial' && op.error?.status === 400) {
+    return 'To fill in what is missing, discard this start, complete the trial, then start it again.'
+  }
+  return null
+}
+
 /** Which trial it belongs to: its number, or the project for a trial not numbered yet. */
 export function trialLabel(qc: QueryClient, ops: Op[], trialId: string): string {
   const t = qc.getQueryData<Trial>(['trial', trialId])
@@ -85,7 +102,8 @@ export function SyncScreen() {
               <Card key={op.id} style={{ borderColor: color.error }}>
                 <Strong>{describeOp(op)}</Strong>
                 <Small>{trialLabel(qc, ops, op.trialId)}</Small>
-                <Banner tone="error">{op.error?.message ?? 'The server refused this change.'}</Banner>
+                <Banner tone="error">{problemLines(op).length > 1 ? problemLines(op).map((m) => `• ${m}`).join('\n') : problemLines(op)[0]}</Banner>
+                {problemHint(op) ? <Small>{problemHint(op)}</Small> : null}
                 <View style={{ flexDirection: 'row', gap: 10 }}>
                   {op.kind !== 'create_trial' ? (
                     <Button title="Open trial" onPress={() => router.push({ pathname: '/trial/[id]', params: { id: op.trialId } })} />

@@ -4,6 +4,7 @@
  * Inputs hold strings exactly as typed; the server parses and checks them.
  * Same rules as the web app (src/features/trials/forms.ts there).
  */
+import { fieldErrors, fieldErrorsByPath } from '@/api/errors'
 import { AGES, AGGREGATES, MATERIAL_LABEL, MATERIALS, SIEVE_LABEL, SIEVE_SETS } from '@/shared/calc'
 import type { FieldNote, Project, Trial } from '@/shared/types'
 
@@ -685,6 +686,63 @@ export function localCompleteness(t: Trial): FieldNote[] {
 
   for (const [who, l] of [['rd', 'For Thermax R&D'], ['site_qc', 'For site QC in charge'], ['sales', 'For Thermax Sales Person']] as const) {
     if (!String(t[`signatory_${who}`] ?? '').trim() && !String(t[`signature_${who}`] ?? '').trim()) add(`signatory_${who}`, `${l} is required.`)
+  }
+  return out
+}
+
+// --- Server errors on JSON fields -----------------------------------------------------
+const MATERIAL_KEY_LABEL: Record<string, string> = {
+  ssd: 'SSD design', absorption: 'absorption', moisture: 'moisture', source: 'source', cement_type: 'type of cement',
+}
+
+/**
+ * Where a nested server error sits, in words: "20 mm, 4.75 mm sieve",
+ * "Cement SSD design", "V funnel at 30 min", "Cube 2 load". `body` is what
+ * was sent, so a sieve row index can be named by its sieve. Null when the
+ * path is a plain field.
+ */
+export function pathLabel(path: string, body?: Record<string, unknown>): string | null {
+  const [head, a, b, c] = path.split('.')
+  if (a === undefined) return null
+  if (head === 'sieves') {
+    const m = `${SIEVE_MATERIAL_LABEL[a as SieveMaterial] ?? a}${a === '20mm' || a === '10mm' ? ' aggregate' : ''}`
+    if (b === undefined) return m
+    const rows = (body?.sieves as Record<string, { sieve?: string }[]> | undefined)?.[a]
+    const sieve = rows?.[Number(b)]?.sieve
+    return sieve ? `${m}, ${SIEVE_LABEL[sieve] ?? sieve} sieve${c === 'sieve' ? ' row' : ''}` : `${m}, row ${Number(b) + 1}`
+  }
+  if (head === 'proportions') return `${SIEVE_MATERIAL_LABEL[a as SieveMaterial] ?? a} proportion`
+  if (head === 'materials') {
+    const m = MATERIAL_LABEL[a] ?? a
+    return b ? `${m} ${MATERIAL_KEY_LABEL[b] ?? b}` : m
+  }
+  if (head === 'fresh_readings') return `Reading at ${readingLabel(a).toLowerCase()}`
+  if (head === 'scc') {
+    const t = SCC_TESTS.find((x) => x.key === a)?.label.split(',')[0] ?? a
+    return b === undefined ? t : `${t} at ${readingLabel(b).toLowerCase()}`
+  }
+  if (head === 'cubes') {
+    const n = Number(a)
+    if (!Number.isInteger(n)) return null
+    return b ? `Cube ${n + 1} ${b}` : `Cube ${n + 1}`
+  }
+  return null
+}
+
+/**
+ * A refused save's field errors for a step: every nested message by its
+ * dotted path (so the cell itself is marked), and each top level field's
+ * first message saying where it is ("Cement SSD design: Enter 100000 kg/m³
+ * or less."), for the summary under the table.
+ */
+export function stepErrors(e: unknown, body?: Record<string, unknown>): Record<string, string> {
+  const top = fieldErrors(e)
+  const deep = fieldErrorsByPath(e)
+  const out: Record<string, string> = { ...deep }
+  for (const [k, msg] of Object.entries(top)) {
+    const nested = Object.keys(deep).find((p) => p.startsWith(`${k}.`) && deep[p] === msg)
+    const where = nested ? pathLabel(nested, body) : null
+    out[k] = where ? `${where}: ${msg}` : msg
   }
   return out
 }

@@ -1,6 +1,6 @@
 // The project's sieve data without a trial (legacy "Add sieve data", T-07),
 // and the legacy completeness rules worked out on the phone (T-30).
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { onlineManager, QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react-native'
 
 import type { SieveData, Trial } from '@/shared/types'
@@ -55,6 +55,44 @@ describe('sieve data', () => {
     await waitFor(() => expect(bodies).toHaveLength(1))
     expect(bodies[0]).toMatchObject({ sieves: { '20mm': expect.arrayContaining([{ sieve: '10', retained: '3.6' }]) }, proportions: {} })
     expect(await screen.findByText('Sieve data saved. New trials of this project start from it.')).toBeTruthy()
+  })
+
+  it('says the sieve data is not on the phone when opened offline, instead of loading for ever', async () => {
+    serve(data)
+    onlineManager.setOnline(false)
+    try {
+      await open()
+      expect(await screen.findByText(/You are offline and this sieve data is not saved on this phone\./)).toBeTruthy()
+      expect(mockApi).not.toHaveBeenCalledWith('/trials/sieve-data/p-1/')
+    } finally {
+      onlineManager.setOnline(true)
+    }
+  })
+
+  it('shows a refused save plainly and reloads the page so it turns read only', async () => {
+    let gets = 0
+    const refused = 'You cannot enter sieve data on this project.'
+    mockApi.mockImplementation(async (path: string, opts?: { method?: string }) => {
+      if (path === '/trials/sieve-data/p-1/' && opts?.method === 'PUT') throw Object.assign(new Error(refused), { status: 409, code: 'not_allowed', fields: {} })
+      if (path === '/trials/sieve-data/p-1/') { gets += 1; return data }
+      if (path === '/projects/p-1/') return { id: 'p-1', project_name: 'Palava towers' }
+      if (path === '/grading-limits/') return []
+      throw new Error(`Unexpected ${path}`)
+    })
+    await open()
+    await fireEvent.changeText(await screen.findByLabelText('Weight retained on 10 mm, kilograms'), '3.6')
+    await fireEvent.press(screen.getByRole('button', { name: 'Save sieve data' }))
+    expect(await screen.findByText(refused)).toBeTruthy()
+    await waitFor(() => expect(gets).toBeGreaterThan(1))
+  })
+
+  it('names the sieve a nested server error is about', async () => {
+    serve(data, () => { throw Object.assign(new Error('Some fields need attention.'), { status: 400, code: 'invalid', fields: { sieves: { '20mm': { 1: { retained: ['Enter 1000000 kg or less.'] } } } } }) })
+    await open()
+    await fireEvent.changeText(await screen.findByLabelText('Weight retained on 20 mm, kilograms'), '3.6')
+    await fireEvent.press(screen.getByRole('button', { name: 'Save sieve data' }))
+    expect(await screen.findByText('20 mm aggregate, 10 mm sieve: Enter 1000000 kg or less.')).toBeTruthy()
+    expect(screen.getByText('Not saved. Fix the highlighted fields and save again.')).toBeTruthy()
   })
 
   it('is read only for someone who does not run trials on the project', async () => {

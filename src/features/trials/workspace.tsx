@@ -6,16 +6,15 @@
  * message line in the footer in place of the web toasts.
  */
 import { useQueryClient } from '@tanstack/react-query'
-import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 
-import { fieldErrors } from '@/api/client'
-import { errorMessage, isApiError, otherErrors, statusOf } from '@/api/errors'
+import { errorMessage, isApiError, statusOf } from '@/api/errors'
 import { isOnline } from '@/offline/connectivity'
 import { outbox } from '@/offline/outbox'
 import { saveTrialPatch } from '@/offline/trialActions'
 import type { FieldNote, Project, Trial } from '@/shared/types'
 
-import { STEPS, type StepNo } from './forms'
+import { stepErrors, STEPS, type StepNo } from './forms'
 
 type Saver = { dirty: boolean; save: () => Promise<boolean> }
 export type Notice = { tone: 'ok' | 'error' | 'info'; text: string } | null
@@ -100,7 +99,8 @@ export const queuedNote = (what = 'Saved') => (isOnline()
  * show (so it is never a "fix the highlighted fields" with nothing highlighted). */
 export function saveError(e: unknown, fields: Record<string, string>, shown?: readonly string[]) {
   if (Object.keys(fields).length === 0) return isApiError(e) ? errorMessage(e) : errorMessage(e, 'Not saved. Try again.')
-  const hidden = shown ? otherErrors(fields, shown) : []
+  // A nested path ("materials.cement.ssd") is shown where its field is.
+  const hidden = shown ? Object.entries(fields).filter(([k]) => !shown.includes(k.split('.')[0])).map(([, v]) => v) : []
   return hidden.length ? `Not saved. ${hidden[0]}` : NOT_SAVED
 }
 
@@ -112,7 +112,7 @@ export function saveError(e: unknown, fields: Record<string, string>, shown?: re
  */
 export function useStepForm<F>(key: string, init: (t: Trial) => F, payload: (f: F) => Record<string, unknown>,
   validate?: (f: F) => Record<string, string>, shown?: readonly string[]) {
-  const { trial, accept, notify, step } = useWorkspace()
+  const { trial, accept, notify, step, missing } = useWorkspace()
   const qc = useQueryClient()
   const reload = useReloadTrial(trial.id)
   const [form, setForm] = useState<F>(() => init(trial))
@@ -136,7 +136,8 @@ export function useStepForm<F>(key: string, init: (t: Trial) => F, payload: (f: 
       setBaseline(next)
       return true
     } catch (e) {
-      const f = fieldErrors(e)
+      // Nested errors by path too ("materials.cement.ssd"), so the cell itself is marked.
+      const f = stepErrors(e, payload(form))
       setErrors(f)
       notify({ tone: 'error', text: saveError(e, f, shown) })
       reload(e)
@@ -149,7 +150,11 @@ export function useStepForm<F>(key: string, init: (t: Trial) => F, payload: (f: 
   // Only a draft's steps can be saved (legacy edit rule): a started trial never holds unsaved step work.
   useSaver(key, dirty && trial.actions.edit, save)
 
-  return { form, setForm, dirty, errors, setErrors, saving, save }
+  // What a refused Start still lists marks its input too; this step's own errors win.
+  const shownErrors = useMemo(() => (missing?.length
+    ? { ...Object.fromEntries(missing.map((m) => [m.field, m.message])), ...errors } : errors), [missing, errors])
+
+  return { form, setForm, dirty, errors: shownErrors, setErrors, saving, save }
 }
 
 export function useAccept(id: string) {

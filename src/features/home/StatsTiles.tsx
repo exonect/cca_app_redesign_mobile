@@ -1,7 +1,7 @@
 import { Text, View } from 'react-native'
 
 import type { Pipeline } from '@/shared/types'
-import { H2, Small } from '@/ui/kit'
+import { ErrorState, H2, Small } from '@/ui/kit'
 import { color, font, radius } from '@/ui/theme'
 
 import { crore, num } from '@/features/projects/format'
@@ -12,7 +12,15 @@ import { crore, num } from '@/features/projects/format'
  * can see. Pass and Fail are trials closed as met and below expectation, as a
  * share of the trials closed with a conclusion.
  */
-export function StatsTiles({ data, admin }: { data: Pipeline | undefined; admin: boolean }) {
+export function StatsTiles({ data, admin, error, onRetry }: { data: Pipeline | undefined; admin: boolean; error?: unknown; onRetry?: () => void }) {
+  if (!data && error) {
+    return (
+      <View style={{ gap: 8 }}>
+        <H2>{admin ? 'Admin dashboard' : 'Sales dashboard'}</H2>
+        <ErrorState error={error} onRetry={onRetry} />
+      </View>
+    )
+  }
   if (!data) return null
   const t = data.trial_summary
   const tiles: { label: string; value: string }[] = [

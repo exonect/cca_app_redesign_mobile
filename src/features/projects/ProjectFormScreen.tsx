@@ -182,7 +182,7 @@ export function ProjectForm({ project }: { project: Project | null }) {
     // Like the server: formats always; past draft, what submit required must stay filled in,
     // and the legacy rules apply to the values being changed.
     const e = isDraft ? validate(v)
-      : { ...requiredAfterDraft(v, picksSalesPerson), ...ruleProblems(v, changedFields(v, saved)), ...validate(v) }
+      : { ...requiredAfterDraft(v, picksSalesPerson, saved), ...ruleProblems(v, changedFields(v, saved)), ...validate(v) }
     if (Object.keys(e).length) fail(e)
     else saveChanges.mutate(v)
   }

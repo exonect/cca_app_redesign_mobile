@@ -395,3 +395,68 @@ describe('error handling', () => {
     await waitFor(() => expect(gets).toBeGreaterThan(1))
   })
 })
+
+describe('server errors on inputs (audit round 2)', () => {
+  const draftActions = { edit: true, start: true, close: false, edit_cubes: true, delete: false, attach: true }
+
+  it('puts a nested server error on its material row and says where it is', async () => {
+    const { ApiError } = jest.requireMock('@/api/client')
+    serve(makeTrial({ status: 'draft', code: null, actions: { ...draftActions, start: false } }), (path, opts) => {
+      if (path === '/trials/t-1/' && opts?.method === 'PATCH') {
+        throw new ApiError(400, 'invalid', 'Some fields need attention.', { materials: { cement: { ssd: ['Enter 100000 kg/m³ or less.'] } } })
+      }
+      return undefined
+    })
+    await open(2)
+    await fireEvent.press(await screen.findByRole('button', { name: /^Cement, adjusted/ }))
+    await fireEvent.changeText(screen.getByLabelText('Cement SSD design, kilograms per cubic metre'), '450')
+    await fireEvent.press(screen.getByRole('button', { name: 'Save' }))
+    // The summary names the material and value; the row itself carries the message, even when folded.
+    expect(await screen.findByText('Cement SSD design: Enter 100000 kg/m³ or less.')).toBeTruthy()
+    expect(screen.getByRole('button', { name: /^Cement, adjusted .*\. Enter 100000 kg\/m³ or less\.$/ })).toBeTruthy()
+    expect(screen.getByText('Not saved. Fix the highlighted fields and save again.')).toBeTruthy()
+  })
+
+  it('marks what a refused Start lists on its input, and drops each item once a save fills it in', async () => {
+    const { ApiError } = jest.requireMock('@/api/client')
+    const completeness = [
+      { field: 'site_temp', message: 'Site temperature is required.' },
+      { field: 'signatory_rd', message: 'For Thermax R&D is required.' },
+    ]
+    const draft = makeTrial({ status: 'draft', code: null, actions: draftActions, completeness } as Partial<Trial>)
+    serve(draft, (path, opts) => {
+      if (path === '/trials/t-1/start/') throw new ApiError(400, 'invalid', 'Some fields need attention.', Object.fromEntries(completeness.map((c) => [c.field, [c.message]])))
+      if (path === '/trials/t-1/' && opts?.method === 'PATCH') return { ...draft, site_temp: '30', completeness: completeness.slice(1) }
+      return undefined
+    })
+    await open(3)
+    await fireEvent.press(await screen.findByRole('button', { name: 'Start trial' }))
+    expect(await screen.findByRole('link', { name: 'Fresh concrete: Site temperature is required.' })).toBeTruthy()
+    // The field itself says it too.
+    expect(screen.getByText('Site temperature is required.')).toBeTruthy()
+    await fireEvent.changeText(screen.getByLabelText('Site temperature, degrees Celsius'), '30')
+    await fireEvent.press(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(screen.queryByRole('link', { name: 'Fresh concrete: Site temperature is required.' })).toBeNull())
+    expect(screen.getByRole('link', { name: 'Conclusion: For Thermax R&D is required.' })).toBeTruthy()
+    expect(screen.queryByText('Site temperature is required.')).toBeNull()
+  })
+
+  it('keeps an item the phone did not know about until Start is tried again', async () => {
+    const { ApiError } = jest.requireMock('@/api/client')
+    const draft = makeTrial({ status: 'draft', code: null, actions: draftActions, completeness: [] } as Partial<Trial>)
+    serve(draft, (path) => {
+      if (path === '/trials/t-1/start/') throw new ApiError(400, 'invalid', 'Some fields need attention.', { bleeding: ['Bleeding is required.'], site_temp: ['Site temperature is required.'] })
+      return undefined
+    })
+    await open(3)
+    await fireEvent.press(await screen.findByRole('button', { name: 'Start trial' }))
+    expect(await screen.findByRole('link', { name: 'Fresh concrete: Bleeding is required.' })).toBeTruthy()
+    expect(screen.getByRole('link', { name: 'Fresh concrete: Site temperature is required.' })).toBeTruthy()
+  })
+
+  it('offers the decimal keypad for the fresh wet density (one decimal allowed)', async () => {
+    serve(makeTrial({ status: 'draft', code: null, actions: { ...draftActions, start: false } }))
+    await open(3)
+    expect((await screen.findByLabelText('Fresh wet density, kilograms per cubic metre')).props.keyboardType).toBe('decimal-pad')
+  })
+})
