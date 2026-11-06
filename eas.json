@@ -19,7 +19,7 @@
         "buildType": "apk"
       },
       "env": {
-        "EXPO_PUBLIC_API_BASE": "https://REPLACE-WITH-UAT-HOST/api/v1",
+        "EXPO_PUBLIC_API_BASE": "https://mobility.thermaxglobal.com/cca_v2_uat/api/v1",
         "EXPO_PUBLIC_ENTRA_CLIENT_ID": "REPLACE-WITH-MOBILE-APP-REGISTRATION-CLIENT-ID",
         "EXPO_PUBLIC_ENTRA_TENANT_ID": "REPLACE-WITH-THERMAX-TENANT-ID"
       }
