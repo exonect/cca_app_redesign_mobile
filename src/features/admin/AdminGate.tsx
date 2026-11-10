@@ -2,8 +2,7 @@ import type { ReactNode } from 'react'
 import { Pressable, Text, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 
-import { useAuth } from '@/auth/AuthProvider'
-import { Body, H1, Small } from '@/ui/kit'
+import { H1, Small } from '@/ui/kit'
 import { color, font, TOUCH } from '@/ui/theme'
 
 import { goBack } from '@/features/projects/TabHeader'
@@ -21,18 +20,6 @@ export function AdminHeader({ title, sub, right, children }: { title: string; su
       {sub ? <Small>{sub}</Small> : null}
       {children}
     </SafeAreaView>
-  )
-}
-
-/** Users and Master data are Admin only; the server refuses others too. */
-export function AdminOnly({ title, children }: { title: string; children: ReactNode }) {
-  const { hasRole } = useAuth()
-  if (hasRole('AD')) return <>{children}</>
-  return (
-    <View style={{ flex: 1, backgroundColor: color.concrete }}>
-      <AdminHeader title={title} />
-      <View style={{ padding: 16 }}><Body style={{ color: color.muted }}>Only an Admin can manage {title.toLowerCase()}. Ask your CCA Admin for changes.</Body></View>
-    </View>
   )
 }
 

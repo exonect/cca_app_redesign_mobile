@@ -6,7 +6,8 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { z } from 'zod'
 
 import { api, ApiError, fieldErrors } from '@/api/client'
-import { errorMessage } from '@/api/errors'
+import { errorMessage, statusOf } from '@/api/errors'
+import { RecordUnavailable } from '@/auth/RequireAccess'
 import { useLookups } from '@/api/hooks'
 import { useAuth } from '@/auth/AuthProvider'
 import { fp } from '@/shared/calc'
@@ -37,6 +38,9 @@ export function RecipeScreen({ id, forTrial, prefill }: { id: string; forTrial?:
   const canEdit = hasRole('AD')
 
   if (isNew && !canCreate) return <Shell title="Recipe"><Body>Only Admins, Sales Admins and CTs can add recipes.</Body></Shell>
+  // Refused or gone on the server: never the copy saved on this phone.
+  const refused = statusOf(q.error)
+  if (!isNew && q.isError && (refused === 403 || refused === 404)) return <RecordUnavailable status={refused} what="Recipe" />
   if (!isNew && !q.data) {
     return <Shell title="Recipe">{q.isError ? <ErrorState error={q.error} onRetry={() => q.refetch()} /> : <Loading label="Loading recipe" />}</Shell>
   }

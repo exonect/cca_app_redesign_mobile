@@ -1,8 +1,8 @@
-import { RecipesOnly } from '@/features/recipes/RecipeGate'
+import { RequireAccess } from '@/auth/RequireAccess'
 import { RecipesScreen } from '@/features/recipes/RecipesScreen'
 
 export default function RecipesRoute() {
-  return <RecipesOnly roles={['AD', 'CT']}><RecipesScreen /></RecipesOnly>
+  return <RequireAccess screen="recipes"><RecipesScreen /></RequireAccess>
 }
 
 export { ScreenErrorBoundary as ErrorBoundary } from '@/ui/ErrorFallback'

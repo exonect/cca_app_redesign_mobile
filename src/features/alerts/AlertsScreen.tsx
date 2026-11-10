@@ -40,8 +40,10 @@ export function AlertsScreen() {
 
   const open = (n: Notification) => {
     if (!n.is_read) readOne.mutate(n.id)
+    // A link to nothing the app has (or something unsafe) goes to My work.
     const to = appRoute(n.link, n.trial_id)
     if (to) router.push(to as Href)
+    else router.navigate('/')
   }
 
   return (

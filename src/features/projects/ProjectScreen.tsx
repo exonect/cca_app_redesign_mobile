@@ -5,6 +5,8 @@ import { Linking, Pressable, RefreshControl, ScrollView, Text, View } from 'reac
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import { api } from '@/api/client'
+import { statusOf } from '@/api/errors'
+import { RecordUnavailable } from '@/auth/RequireAccess'
 import { useOnline } from '@/offline/connectivity'
 import { labelsFrom, useOutbox } from '@/offline/outbox'
 import { draftListItems, listItemView } from '@/offline/overlay'
@@ -31,6 +33,9 @@ type SheetName = 'support' | 'assign' | 'complete' | 'reopen' | 'delete' | 'more
 
 export function ProjectScreen({ id }: { id: string }) {
   const q = useProject(id)
+  // Refused or gone on the server: never the copy saved on this phone.
+  const refused = statusOf(q.error)
+  if (q.isError && (refused === 403 || refused === 404)) return <RecordUnavailable status={refused} what="Project" />
   if (q.data) return <ProjectDetail project={q.data} />
   return (
     <View style={{ flex: 1, backgroundColor: color.concrete }}>

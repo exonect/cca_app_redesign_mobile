@@ -11,4 +11,11 @@ describe('notification links', () => {
     expect(appRoute('', 't2')).toBe('/trial/t2')
     expect(appRoute('/reports')).toBeNull()
   })
+  it('never maps an unsafe link or id', () => {
+    expect(appRoute('//evil.example/projects/p1')).toBeNull()
+    expect(appRoute('https://evil.example/projects/p1')).toBeNull()
+    expect(appRoute('/projects/p1/../../admin/users')).toBeNull()
+    expect(appRoute('/sign-in')).toBeNull()
+    expect(appRoute(null, '../admin')).toBeNull()
+  })
 })

@@ -1,7 +1,7 @@
 // Resuming a saved session: only the server refusing it signs the person
 // out; no connection keeps it and offers Retry. Microsoft sign in that ends
 // in an error says so.
-import { fireEvent, render, screen, waitFor } from '@testing-library/react-native'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native'
 import { Text } from 'react-native'
 
 import { api, session } from '@/api/client'
@@ -149,5 +149,28 @@ describe('ID and password sign in (temporary, UAT)', () => {
     mockApi.mockRejectedValue(new ApiError(0, 'offline', 'No connection.'))
     await render(<AuthProvider><Panel /></AuthProvider>)
     expect(await screen.findByText('signed_out||error|false')).toBeTruthy()
+  })
+})
+
+describe('session ended by the server (expired, or signed out elsewhere)', () => {
+  it('signs out with a notice and keeps the saved data for this person (another person signing in deletes it)', async () => {
+    let expire: () => void = () => undefined
+    const s = session as unknown as { onExpired: (fn: () => void) => () => void }
+    const original = s.onExpired
+    s.onExpired = (fn) => { expire = fn; return () => undefined }
+    const { offlineStorage } = jest.requireMock('@/offline/storage')
+    await offlineStorage().write('cache.json', JSON.stringify({ v: 1, userId: 7, savedAt: Date.now(), user: { id: 7, role: 'CT', full_name: 'Sneha Rao' }, state: { queries: [], mutations: [] } }))
+    mockApi.mockImplementation((async (path: string) => (path === '/auth/me/' ? { id: 7, role: 'CT', full_name: 'Sneha Rao' } : { microsoft: true, password: false })) as never)
+    try {
+      await render(<AuthProvider><Probe /></AuthProvider>)
+      expect(await screen.findByText('signed_in|')).toBeTruthy()
+      await act(async () => { expire() })
+      expect(await screen.findByText('signed_out|Your session ended. Sign in again to continue.')).toBeTruthy()
+      expect(await offlineStorage().read('cache.json')).not.toBeNull()
+    } finally {
+      s.onExpired = original
+      await offlineStorage().remove('cache.json')
+      mockApi.mockReset()
+    }
   })
 })

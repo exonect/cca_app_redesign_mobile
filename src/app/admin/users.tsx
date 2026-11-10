@@ -1,8 +1,8 @@
-import { AdminOnly } from '@/features/admin/AdminGate'
+import { RequireAccess } from '@/auth/RequireAccess'
 import { UsersScreen } from '@/features/admin/UsersScreen'
 
 export default function UsersRoute() {
-  return <AdminOnly title="Users"><UsersScreen /></AdminOnly>
+  return <RequireAccess screen="users"><UsersScreen /></RequireAccess>
 }
 
 export { ScreenErrorBoundary as ErrorBoundary } from '@/ui/ErrorFallback'

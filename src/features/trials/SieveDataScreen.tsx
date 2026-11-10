@@ -9,7 +9,7 @@ import { router, useLocalSearchParams, usePreventRemove } from 'expo-router'
 import { useState, type ReactNode } from 'react'
 import { Alert, Text, View } from 'react-native'
 
-import { api, ApiError } from '@/api/client'
+import { api } from '@/api/client'
 import { statusOf } from '@/api/errors'
 import { NotOnPhone } from '@/offline/ui'
 import type { Project, SieveData } from '@/shared/types'
@@ -32,11 +32,13 @@ export function SieveDataScreen() {
   const data = useQuery({ queryKey: ['sieve-data', id], queryFn: () => api<SieveData>(`/trials/sieve-data/${id}/`), enabled: !!id })
   const project = useQuery({ queryKey: ['project', id], queryFn: () => api<Project>(`/projects/${id}/`), enabled: !!id })
   const header = <Header title="Sieve data" subtitle={project.data?.project_name} back={{ label: project.data?.project_name ?? 'project', onPress: () => back(id) }} />
-  if (!data.data) {
+  // Refused or gone on the server: never the copy saved on this phone.
+  const refused = data.isError && (statusOf(data.error) === 403 || statusOf(data.error) === 404)
+  if (!data.data || refused) {
     return (
       <Screen header={header}>
         {data.isError
-          ? (data.error instanceof ApiError && data.error.status === 404
+          ? (refused
             ? <Banner tone="error">This project was not found, or you cannot see it.</Banner>
             : <ErrorState error={data.error} onRetry={() => data.refetch()} />)
           // Offline the query waits: say so instead of loading for ever.

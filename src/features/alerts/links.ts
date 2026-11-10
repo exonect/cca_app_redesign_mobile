@@ -1,11 +1,12 @@
-/** Map a notification link (web paths) to an app route.
- * /projects/<id> -> /project/<id>; /projects/<id>/trials/<tid> -> /trial/<tid>. */
+import { safeTarget } from '@/auth/redirect'
+
+/** Map a notification link (web paths) to an app route, through the same
+ * rules as links from outside (src/auth/redirect.ts).
+ * /projects/<id> -> /project/<id>; /projects/<id>/trials/<tid> -> /trial/<tid>.
+ * Null when the link names no screen of the app. */
 export function appRoute(link: string | null | undefined, trialId?: string | null): string | null {
-  const path = (link ?? '').split(/[?#]/)[0].replace(/\/+$/, '')
-  const trial = path.match(/^\/projects\/[^/]+\/trials\/([^/]+)$/) ?? path.match(/^\/trials\/([^/]+)$/)
-  if (trial) return `/trial/${trial[1]}`
-  const project = path.match(/^\/projects\/([^/]+)$/)
-  if (project && project[1] !== 'new') return `/project/${project[1]}`
-  if (trialId) return `/trial/${trialId}`
+  const route = safeTarget(link)
+  if (route && route !== '/') return route
+  if (trialId) return safeTarget(`/trial/${trialId}`)
   return null
 }
