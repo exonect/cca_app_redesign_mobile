@@ -26,16 +26,16 @@ describe('project form model', () => {
     expect(validate({ ...EMPTY, sfdc_no: '049318' })).toEqual({})
   })
 
-  it('asks a Sales Person for everything on step 1 but the owner', () => {
-    expect(missingStep1(EMPTY, false)).not.toContain('sales_person')
-    expect(missingStep1(EMPTY, true)).toContain('sales_person')
+  it('never asks for the owner: the creator is the Sales Person, for every role (P-07)', () => {
+    expect(EMPTY).not.toHaveProperty('sales_person')
+    expect(missingStep1(EMPTY)).not.toContain('sales_person')
+    expect(Object.keys(requiredAfterDraft(EMPTY))).not.toContain('sales_person')
   })
 
-  it('sends lookups as ids or null and the owner only for managers', () => {
-    const body = toPayload({ ...EMPTY, region: '3', city: '', sales_person: '9', potential_cr: ' ' }, false)
+  it('sends lookups as ids or null and never the owner', () => {
+    const body = toPayload({ ...EMPTY, region: '3', city: '', potential_cr: ' ' })
     expect(body).toMatchObject({ region: 3, city: null, potential_cr: null })
     expect(body).not.toHaveProperty('sales_person')
-    expect(toPayload({ ...EMPTY, sales_person: '9' }, true).sales_person).toBe(9)
   })
 
   it('limits whole digits like the server decimal columns', () => {
@@ -75,27 +75,25 @@ describe('final server rules for projects', () => {
     expect(ruleProblems({ ...EMPTY, potential_cr: '0', selling_basic_price: '0.00', bulk_and_barrel: '64' })).toEqual({
       potential_cr: 'Project potential must be more than 0.', selling_basic_price: 'Enter a price above 0, or leave it blank.',
     })
-    expect(missingStep1(EMPTY, false)).toContain('remarks')
+    expect(missingStep1(EMPTY)).toContain('remarks')
     expect(changedFields({ ...EMPTY, remarks: 'x' }, EMPTY)).toEqual(['remarks'])
   })
 
   it('keeps fields required on submit filled once past draft', () => {
-    const e = requiredAfterDraft({ ...EMPTY, customer_name: 'Mula' }, false)
+    const e = requiredAfterDraft({ ...EMPTY, customer_name: 'Mula' })
     expect(e.customer_name).toBeUndefined()
     expect(e.project_name).toBe('Project name is required once the project is created.')
     expect(e.cement_brands).toBe('Cement brands is required once the project is created.')
     expect(e.selling_basic_price).toBe('Enter a bulk or barrel basic selling price above zero.')
-    expect(e.sales_person).toBeUndefined() // set by the server for a Sales Person
     expect(e.admixture_base).toBeUndefined() // optional
-    expect(requiredAfterDraft(EMPTY, true).sales_person).toBe('Sales Person is required once the project is created.')
   })
 
   it('checks only changes against the saved project, as the server does (audit round 2)', () => {
     // An imported project with gaps (no cement brands, no prices) stays editable.
     const saved = { ...EMPTY, customer_name: 'Mula', project_name: 'Palava', selling_basic_price: '' }
-    expect(requiredAfterDraft({ ...saved, remarks: '' }, false, saved)).toEqual({})
+    expect(requiredAfterDraft({ ...saved, remarks: '' }, saved)).toEqual({})
     // Emptying a filled field is still refused, and so is a price change leaving none above zero.
-    expect(requiredAfterDraft({ ...saved, project_name: ' ' }, false, saved)).toEqual({ project_name: 'Project name is required once the project is created.' })
-    expect(requiredAfterDraft({ ...saved, bulk_and_barrel: '0' }, false, saved).selling_basic_price).toBe('Enter a bulk or barrel basic selling price above zero.')
+    expect(requiredAfterDraft({ ...saved, project_name: ' ' }, saved)).toEqual({ project_name: 'Project name is required once the project is created.' })
+    expect(requiredAfterDraft({ ...saved, bulk_and_barrel: '0' }, saved).selling_basic_price).toBe('Enter a bulk or barrel basic selling price above zero.')
   })
 })

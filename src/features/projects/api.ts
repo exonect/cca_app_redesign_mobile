@@ -3,7 +3,7 @@ import { useInfiniteQuery, useQuery, type QueryClient } from '@tanstack/react-qu
 
 import { api, type Page, type Query } from '@/api/client'
 import { statusOf } from '@/api/errors'
-import type { Pipeline, Project, ProjectEvent, ProjectListItem, TrialListItem, User } from '@/shared/types'
+import type { Pipeline, Project, ProjectEvent, ProjectListItem, TrialListItem } from '@/shared/types'
 
 export const PAGE_SIZE = 25
 
@@ -65,10 +65,6 @@ export function useProjectTrials(id: string) {
   })
 }
 
-/** Active Sales Persons, for Admins and Sales Admins choosing a project owner. */
-export function useSalesPersons(enabled: boolean) {
-  return useQuery({ queryKey: ['users', 'sales'], queryFn: () => api<User[]>('/users/sales/'), enabled, staleTime: 5 * 60_000 })
-}
 
 /** After any project change: lists, pipeline, the project, its timeline and trial lists. */
 export function invalidateProject(qc: QueryClient, id?: string) {

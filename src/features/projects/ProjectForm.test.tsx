@@ -17,8 +17,10 @@ jest.mock('expo-router', () => ({
   usePreventRemove: (dirty: boolean, cb?: unknown) => mockPreventRemove(dirty, cb),
 }))
 jest.mock('react-native-safe-area-context', () => require('react-native-safe-area-context/jest/mock').default)
+const SALES_PERSON = { id: 1, full_name: 'Rahul Patil', role: 'SP', role_label: 'Sales Person', region_name: 'West' }
+const mockAuth = { user: SALES_PERSON }
 jest.mock('@/auth/AuthProvider', () => ({
-  useAuth: () => ({ user: { id: 1, full_name: 'Rahul Patil', role: 'SP', role_label: 'Sales Person', region_name: 'West' }, hasRole: (...r: string[]) => r.includes('SP') }),
+  useAuth: () => ({ user: mockAuth.user, hasRole: (...r: string[]) => r.includes(mockAuth.user.role) }),
 }))
 jest.mock('@/api/client', () => {
   class ApiError extends Error {
@@ -72,6 +74,7 @@ const complete = (over: Partial<Project> = {}) => {
 }
 
 beforeEach(() => {
+  mockAuth.user = SALES_PERSON
   mockPush.mockReset(); mockReplace.mockReset(); mockApi.mockReset(); mockPreventRemove.mockClear(); mockAllowLeave.mockClear()
   mockApi.mockImplementation(async (path: string, opts?: { query?: Record<string, unknown> }) => {
     if (path === '/lookups/') return (lookups[String(opts?.query?.category)] ?? []) as never
@@ -103,6 +106,51 @@ describe('project form', () => {
     expect(await screen.findByText('SFDC number is required to create the project.')).toBeTruthy()
     expect(screen.getByText('Customer details')).toBeTruthy()
     expect(mockReplace).not.toHaveBeenCalled()
+  })
+})
+
+describe('project form, Sales Person (P-07: the creator owns the project)', () => {
+  const people = [
+    { id: 7, full_name: 'Arjun Mehta', role: 'AD', role_label: 'Admin', region_name: 'West' },
+    { id: 8, full_name: 'Subrata Dey', role: 'SAD', role_label: 'Sales Admin', region_name: 'West' },
+    { id: 9, full_name: 'Neha Joshi', role: 'SP', role_label: 'Sales Person', region_name: 'West' },
+  ]
+  it.each(people)('shows the signed in $role_label read only on a new project and never sends a Sales Person', async (who) => {
+    mockAuth.user = who
+    const base = mockApi.getMockImplementation()!
+    mockApi.mockImplementation(async (path: string, opts?: Parameters<typeof api>[1]) => {
+      if (path === '/projects/' && opts?.method === 'POST') return project({ sales_person: { id: who.id, name: who.full_name } }) as never
+      return base(path, opts)
+    })
+    await render(wrap(<ProjectForm project={null} />))
+    const field = screen.getByLabelText('Sales Person')
+    expect(field.props.value).toBe(who.full_name)
+    expect(field.props.editable).toBe(false)
+    expect(screen.queryByRole('button', { name: /Choose a Sales Person/ })).toBeNull()
+    await fireEvent.press(screen.getByRole('button', { name: 'Save draft' }))
+    await waitFor(() => expect(mockApi).toHaveBeenCalledWith('/projects/', expect.objectContaining({ method: 'POST' })))
+    const body = mockApi.mock.calls.find(([p, o]) => p === '/projects/' && o?.method === 'POST')![1]!.body
+    expect(body).not.toHaveProperty('sales_person')
+    expect(mockApi).not.toHaveBeenCalledWith('/users/sales/', expect.anything())
+  })
+
+  it("shows the project's Sales Person read only when an Admin edits, and does not send it", async () => {
+    mockAuth.user = people[0]
+    const p = complete({ status: 'created', status_label: 'Created' })
+    const base = mockApi.getMockImplementation()!
+    mockApi.mockImplementation(async (path: string, opts?: Parameters<typeof api>[1]) => {
+      if (path === '/projects/p1/' && opts?.method === 'PATCH') return p as never
+      return base(path, opts)
+    })
+    await render(wrap(<ProjectForm project={p} />))
+    const field = screen.getByLabelText('Sales Person')
+    expect(field.props.value).toBe('Rahul Patil')
+    expect(field.props.editable).toBe(false)
+    await fireEvent.changeText(screen.getByLabelText('Project name'), 'Baner podium, phase 2')
+    await fireEvent.press(screen.getAllByRole('button', { name: 'Save changes' })[0])
+    await waitFor(() => expect(mockApi).toHaveBeenCalledWith('/projects/p1/', expect.objectContaining({ method: 'PATCH' })))
+    const body = mockApi.mock.calls.find(([q, o]) => q === '/projects/p1/' && o?.method === 'PATCH')![1]!.body
+    expect(body).not.toHaveProperty('sales_person')
   })
 })
 

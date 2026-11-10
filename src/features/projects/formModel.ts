@@ -46,7 +46,6 @@ export const projectSchema = z.object({
     .refine((v) => v === '' || z.email().safeParse(v).success, 'Enter an email address like name@company.com.'),
   contact_phone: z.string().trim().refine((v) => v === '' || /^\d{10}$/.test(v), 'Enter a 10 digit phone number, without +91 or spaces.'),
   sfdc_no: z.string().trim().refine((v) => v === '' || /^\d{6}$/.test(v), 'Enter all 6 digits of the SFDC number, including leading zeros.'),
-  sales_person: z.string(),
   potential_cr: optionalDecimal('the potential', 8, 4), // max_digits 12, 4 places: legacy potentials such as 0.0025 Cr
   selling_basic_price: optionalDecimal('the bulk price', 10),
   bulk_and_barrel: optionalDecimal('the barrel price', 10),
@@ -73,7 +72,7 @@ export function priceMissing(v: Pick<ProjectFormValues, 'selling_basic_price' | 
 
 export const EMPTY: ProjectFormValues = {
   customer_name: '', project_name: '', contact_person_name: '', contact_email: '', contact_phone: '', sfdc_no: '',
-  sales_person: '', potential_cr: '', selling_basic_price: '', bulk_and_barrel: '', remarks: '',
+  potential_cr: '', selling_basic_price: '', bulk_and_barrel: '', remarks: '',
   region: '', city: '', wc_ratio_corrected: '', retention_time: '', slump_flow: '', strength_age: '', sand_type: '',
   fine_aggregate_source: '', coarse_aggregate_source: '', sand_zone: '', admixture_base: '',
   cement_brands: [], cement_grades: [], mineral_admixtures: [], grades_of_concrete: [], wc_ratios_ssd: [], compressive_strengths: [],
@@ -82,7 +81,7 @@ export const EMPTY: ProjectFormValues = {
 
 export const LABELS: Record<FormField, string> = {
   customer_name: 'Customer name', project_name: 'Project name', contact_person_name: 'Contact person',
-  contact_email: 'Contact email', contact_phone: 'Contact phone', sfdc_no: 'SFDC number', sales_person: 'Sales Person',
+  contact_email: 'Contact email', contact_phone: 'Contact phone', sfdc_no: 'SFDC number',
   potential_cr: 'Project potential', selling_basic_price: 'Basic selling price, bulk', bulk_and_barrel: 'Basic selling price, barrel',
   remarks: 'Remarks', region: 'Region', city: 'City', wc_ratio_corrected: 'W/C ratio, corrected',
   retention_time: 'Retention time', slump_flow: 'Target slump or flow', strength_age: 'Strength requirement age',
@@ -93,12 +92,12 @@ export const LABELS: Record<FormField, string> = {
 }
 
 export const STEP1_FIELDS: FormField[] = [
-  'customer_name', 'project_name', 'contact_person_name', 'contact_email', 'contact_phone', 'sales_person', 'sfdc_no',
+  'customer_name', 'project_name', 'contact_person_name', 'contact_email', 'contact_phone', 'sfdc_no',
   'region', 'city', 'potential_cr', 'remarks',
 ]
 /** Step 1 fields the server requires on submit (REQUIRED_ON_SUBMIT). Remarks are required, as in the legacy app. */
 export const STEP1_REQUIRED: FormField[] = [
-  'customer_name', 'project_name', 'contact_person_name', 'contact_email', 'contact_phone', 'sales_person', 'sfdc_no',
+  'customer_name', 'project_name', 'contact_person_name', 'contact_email', 'contact_phone', 'sfdc_no',
   'region', 'city', 'potential_cr', 'remarks',
 ]
 
@@ -169,11 +168,10 @@ export const REQUIRED_AFTER_DRAFT: FormField[] = [
 /** `saved`: the project as stored. Like the server, only a change is checked: a field
  * that was filled may not be emptied, and the prices need one above zero only when
  * they change, so an imported project with a gap can still be edited elsewhere. */
-export function requiredAfterDraft(v: ProjectFormValues, picksSalesPerson: boolean, saved?: ProjectFormValues): FormErrors {
+export function requiredAfterDraft(v: ProjectFormValues, saved?: ProjectFormValues): FormErrors {
   const out: FormErrors = {}
   const empty = (x: unknown) => (Array.isArray(x) ? x.length === 0 : String(x).trim() === '')
   for (const f of REQUIRED_AFTER_DRAFT) {
-    if (f === 'sales_person' && !picksSalesPerson) continue
     if (saved && empty(saved[f])) continue
     if (empty(v[f])) out[f] = `${LABELS[f]} is required once the project is created.`
   }
@@ -182,9 +180,9 @@ export function requiredAfterDraft(v: ProjectFormValues, picksSalesPerson: boole
   return out
 }
 
-/** Step 1 fields still empty, for "Continue" (sales_person only when the user picks it). */
-export function missingStep1(v: ProjectFormValues, picksSalesPerson: boolean): FormField[] {
-  return STEP1_REQUIRED.filter((f) => (f === 'sales_person' ? picksSalesPerson : true) && String(v[f]).trim() === '')
+/** Step 1 fields still empty, for "Continue". */
+export function missingStep1(v: ProjectFormValues): FormField[] {
+  return STEP1_REQUIRED.filter((f) => String(v[f]).trim() === '')
 }
 
 const id = (r: Ref | null) => (r ? String(r.id) : '')
@@ -194,7 +192,6 @@ export function fromProject(p: Project): ProjectFormValues {
   return {
     customer_name: p.customer_name, project_name: p.project_name, contact_person_name: p.contact_person_name,
     contact_email: p.contact_email, contact_phone: p.contact_phone, sfdc_no: p.sfdc_no,
-    sales_person: p.sales_person ? String(p.sales_person.id) : '',
     potential_cr: p.potential_cr ?? '', selling_basic_price: p.selling_basic_price ?? '', bulk_and_barrel: p.bulk_and_barrel ?? '',
     remarks: p.remarks,
     region: id(p.region), city: id(p.city), wc_ratio_corrected: id(p.wc_ratio_corrected), retention_time: id(p.retention_time),
@@ -208,8 +205,8 @@ export function fromProject(p: Project): ProjectFormValues {
 }
 
 /** Request body for POST /projects/ or PATCH /projects/:id/. Empty text stays "", empty numbers and lookups become null.
- * sales_person is sent only by users who pick it (the server sets it for a Sales Person). */
-export function toPayload(v: ProjectFormValues, picksSalesPerson: boolean) {
+ * sales_person is never sent: the server makes whoever creates the project its Sales Person, and it never changes (P-07). */
+export function toPayload(v: ProjectFormValues) {
   const nullable = (s: string) => (s.trim() === '' ? null : s.trim())
   const fk = (s: string) => (s === '' ? null : Number(s))
   const body: Record<string, unknown> = {
@@ -221,7 +218,6 @@ export function toPayload(v: ProjectFormValues, picksSalesPerson: boolean) {
   }
   for (const f of FK_FIELDS) body[f] = fk(v[f])
   for (const f of M2M_FIELDS) body[f] = v[f]
-  if (picksSalesPerson) body.sales_person = fk(v.sales_person)
   return body
 }
 

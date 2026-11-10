@@ -12,7 +12,7 @@ import type { Project, Ref } from '@/shared/types'
 import { Banner, Body, Button, Card, Chips, ErrorState, Field, H1, Loading, NumberField, Picker, Small, Strong, TextField } from '@/ui/kit'
 import { color, font, radius, TOUCH } from '@/ui/theme'
 
-import { invalidateProject, storeProject, useProject, useSalesPersons } from './api'
+import { invalidateProject, storeProject, useProject } from './api'
 import { num } from './format'
 import {
   CATEGORY, cementitiousOptions, CEMENTITIOUS_MAX, changedFields, EMPTY, fromProject, isFormField, LABELS, missingStep1, PRICE_MESSAGE,
@@ -66,8 +66,7 @@ function BackLink({ label, onPress }: { label: string; onPress: () => void }) {
 }
 
 export function ProjectForm({ project }: { project: Project | null }) {
-  const { user, hasRole } = useAuth()
-  const picksSalesPerson = hasRole('AD', 'SAD')
+  const { user } = useAuth()
   const qc = useQueryClient()
   const insets = useSafeAreaInsets()
   const scroll = useRef<ScrollViewInstance>(null)
@@ -115,7 +114,7 @@ export function ProjectForm({ project }: { project: Project | null }) {
   const leaveTo = (id: string) => { allowLeave(); router.replace(`/project/${id}`) }
 
   const save = async (v: ProjectFormValues): Promise<Project> => {
-    const body = toPayload(v, picksSalesPerson)
+    const body = toPayload(v)
     const p = savedId
       ? await api<Project>(`/projects/${savedId}/`, { method: 'PATCH', body })
       : await api<Project>('/projects/', { method: 'POST', body })
@@ -164,7 +163,7 @@ export function ProjectForm({ project }: { project: Project | null }) {
     setBanner(null)
     // Formats, required fields, then the legacy wizard rules (3 characters, contact name, potential above 0).
     const e = { ...ruleProblems(values, STEP1_FIELDS), ...validate(values, STEP1_FIELDS) }
-    for (const f of missingStep1(values, picksSalesPerson)) e[f] = `${LABELS[f]} is required.`
+    for (const f of missingStep1(values)) e[f] = `${LABELS[f]} is required.`
     if (Object.keys(e).length) { setErrors(e); top() }
     else goTo(2)
   }
@@ -182,7 +181,7 @@ export function ProjectForm({ project }: { project: Project | null }) {
     // Like the server: formats always; past draft, what submit required must stay filled in,
     // and the legacy rules apply to the values being changed.
     const e = isDraft ? validate(v)
-      : { ...requiredAfterDraft(v, picksSalesPerson, saved), ...ruleProblems(v, changedFields(v, saved)), ...validate(v) }
+      : { ...requiredAfterDraft(v, saved), ...ruleProblems(v, changedFields(v, saved)), ...validate(v) }
     if (Object.keys(e).length) fail(e)
     else saveChanges.mutate(v)
   }
@@ -231,7 +230,7 @@ export function ProjectForm({ project }: { project: Project | null }) {
         {banner ? <Banner tone="error">{banner}</Banner> : null}
 
         {step === 1
-          ? <CustomerStep v={values} e={errors} set={set} project={project} picksSalesPerson={picksSalesPerson} ownName={project?.sales_person?.name ?? user?.full_name ?? ''} />
+          ? <CustomerStep v={values} e={errors} set={set} project={project} salesPersonName={project ? project.sales_person?.name ?? '' : user?.full_name ?? ''} />
           : <TechnicalStep v={values} e={errors} set={set} project={project} />}
 
         {step === 1 && isDraft ? (
@@ -295,15 +294,10 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
   return <Card title={title} style={{ gap: 14 }}>{children}</Card>
 }
 
-function CustomerStep(p: StepProps & { picksSalesPerson: boolean; ownName: string }) {
-  const { v, e, set, project, picksSalesPerson, ownName } = p
-  const sales = useSalesPersons(picksSalesPerson)
+function CustomerStep(p: StepProps & { salesPersonName: string }) {
+  const { v, e, set, project, salesPersonName } = p
   const regions = useLookups('region')
   const regionName = regions.data?.find((r) => String(r.id) === v.region)?.value ?? project?.region?.value
-  const salesOptions = (sales.data ?? []).map((u) => ({ value: u.id, label: u.full_name }))
-  if (project?.sales_person && !salesOptions.some((o) => o.value === project.sales_person!.id)) {
-    salesOptions.push({ value: project.sales_person.id, label: project.sales_person.name })
-  }
   return (
     <>
       <Section title="Customer and project">
@@ -316,16 +310,10 @@ function CustomerStep(p: StepProps & { picksSalesPerson: boolean; ownName: strin
         <Text_ {...p} f="contact_email" label="Email" keyboardType="email-address" autoCapitalize="none" autoCorrect={false} autoComplete="off" maxLength={254} />
       </Section>
       <Section title="Opportunity">
-        {picksSalesPerson ? (
-          <Field label="Sales Person" error={e.sales_person} hint={sales.isError ? 'The Sales Person list could not be loaded.' : 'Owns the project and is notified about it'}>
-            <Picker label="Sales Person" value={v.sales_person ? Number(v.sales_person) : null} options={salesOptions} invalid={Boolean(e.sales_person)}
-              placeholder={sales.isLoading ? 'Loading…' : 'Choose a Sales Person'} onChange={(x) => set('sales_person', x === null ? '' : String(x))} />
-          </Field>
-        ) : (
-          <Field label="Sales Person" hint={project ? undefined : 'Filled from your sign in'}>
-            <TextField accessibilityLabel="Sales Person" value={ownName} editable={false} />
-          </Field>
-        )}
+        {/* P-07: whoever creates the project is its Sales Person, for every role; it never changes. */}
+        <Field label="Sales Person" hint={project ? undefined : 'Filled from your sign in'}>
+          <TextField accessibilityLabel="Sales Person" value={salesPersonName} editable={false} />
+        </Field>
         <View style={{ flexDirection: 'row', gap: 12 }}>
           <View style={{ flex: 1 }}>
             <Text_ {...p} f="sfdc_no" label="SFDC number" hint="6 digits" keyboardType="number-pad" maxLength={6} />
