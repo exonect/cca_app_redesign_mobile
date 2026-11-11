@@ -154,6 +154,24 @@ describe('project form, Sales Person (P-07: the creator owns the project)', () =
   })
 })
 
+describe('project form, number fields (UAT finding 11 Nov)', () => {
+  it('keeps only digits in mobile and SFDC number, and digits with one point in potential', async () => {
+    await render(wrap(<ProjectForm project={null} />))
+    const typed = async (label: string, text: string) => {
+      fireEvent.changeText(screen.getByLabelText(label), text)
+      await waitFor(() => expect(screen.getByLabelText(label)).toBeTruthy())
+      return screen.getByLabelText(label).props.value
+    }
+    expect(await typed('Mobile number', '98a7!6 5-4.3x2,1@09')).toBe('9876543210')
+    expect(await typed('Mobile number', '+91 98765 43210')).toBe('9876543210')
+    expect(await typed('SFDC number', 'AB00#45.12-99')).toBe('004512')
+    const potential = 'Project potential, rupees crore'
+    expect(await typed(potential, 'a1b2.5.7-%e9')).toBe('12.579')
+    expect(await typed(potential, '3,75')).toBe('3.75')
+    expect(await typed(potential, '123456789.123456')).toBe('12345678.1234')
+  })
+})
+
 describe('project form errors and leaving', () => {
   it('maps a nested list error to its field and says errors on fields the form does not show', async () => {
     const p = project()

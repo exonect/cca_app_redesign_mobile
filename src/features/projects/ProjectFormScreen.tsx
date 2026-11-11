@@ -8,6 +8,7 @@ import { api, fieldErrors } from '@/api/client'
 import { errorMessage, statusOf } from '@/api/errors'
 import { useLookups } from '@/api/hooks'
 import { useAuth } from '@/auth/AuthProvider'
+import { phoneFilter, potentialFilter, sfdcFilter } from '@/shared/inputFilters'
 import type { Project, Ref } from '@/shared/types'
 import { Banner, Body, Button, Card, Chips, ErrorState, Field, H1, Loading, NumberField, Picker, Small, Strong, TextField } from '@/ui/kit'
 import { color, font, radius, TOUCH } from '@/ui/theme'
@@ -258,10 +259,11 @@ type StepProps = {
   set: <K extends FormField>(k: K, v: ProjectFormValues[K]) => void
 }
 
-function Text_({ f, label, v, e, set, hint, ...input }: StepProps & { f: FormField; label: string; hint?: string } & Parameters<typeof TextField>[0]) {
+/** `filter` keeps only the allowed characters of whatever is typed or pasted. */
+function Text_({ f, label, v, e, set, hint, filter, ...input }: StepProps & { f: FormField; label: string; hint?: string; filter?: (t: string) => string } & Parameters<typeof TextField>[0]) {
   return (
     <Field label={label} error={e[f]} hint={hint}>
-      <TextField accessibilityLabel={label} invalid={Boolean(e[f])} value={String(v[f])} onChangeText={(t) => set(f, t as never)} {...input} />
+      <TextField accessibilityLabel={label} invalid={Boolean(e[f])} value={String(v[f])} onChangeText={(t) => set(f, (filter ? filter(t) : t) as never)} {...input} />
     </Field>
   )
 }
@@ -306,7 +308,7 @@ function CustomerStep(p: StepProps & { salesPersonName: string }) {
       </Section>
       <Section title="Contact person at the customer">
         <Text_ {...p} f="contact_person_name" label="Name" autoComplete="off" maxLength={256} />
-        <Text_ {...p} f="contact_phone" label="Mobile number" hint="10 digits, without +91" keyboardType="number-pad" maxLength={10} autoComplete="off" />
+        <Text_ {...p} f="contact_phone" label="Mobile number" hint="10 digits, without +91" keyboardType="number-pad" filter={phoneFilter} autoComplete="off" />
         <Text_ {...p} f="contact_email" label="Email" keyboardType="email-address" autoCapitalize="none" autoCorrect={false} autoComplete="off" maxLength={254} />
       </Section>
       <Section title="Opportunity">
@@ -316,12 +318,12 @@ function CustomerStep(p: StepProps & { salesPersonName: string }) {
         </Field>
         <View style={{ flexDirection: 'row', gap: 12 }}>
           <View style={{ flex: 1 }}>
-            <Text_ {...p} f="sfdc_no" label="SFDC number" hint="6 digits" keyboardType="number-pad" maxLength={6} />
+            <Text_ {...p} f="sfdc_no" label="SFDC number" hint="6 digits" keyboardType="number-pad" filter={sfdcFilter} />
           </View>
           <View style={{ flex: 1 }}>
             <Field label="Potential" error={e.potential_cr}>
               <NumberField accessibilityLabel="Project potential, rupees crore" unit="Cr" invalid={Boolean(e.potential_cr)} value={v.potential_cr}
-                onChangeText={(t) => set('potential_cr', t)} />
+                onChangeText={(t) => set('potential_cr', potentialFilter(t))} />
             </Field>
           </View>
         </View>
