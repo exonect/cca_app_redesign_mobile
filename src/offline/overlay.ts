@@ -64,7 +64,8 @@ export function applyStart(t: Trial): Trial {
 const EMPTY_RESULTS: Trial['results'] = { sieves: {}, grading: [], mix: null, cubes: {}, checks: [], errors: [] }
 
 /** A trial made on this phone that the server has not seen yet. */
-export function draftTrial(op: Extract<Op, { kind: 'create_trial' }>, project?: Pick<Project, 'project_name' | 'customer_name'>): Trial {
+export function draftTrial(op: Extract<Op, { kind: 'create_trial' }>,
+  project?: Pick<Project, 'project_name' | 'customer_name'> & Partial<Pick<Project, 'created_by' | 'sales_person'>>): Trial {
   return {
     id: op.trialId, code: null, project: op.project,
     project_name: project?.project_name ?? op.projectName, customer_name: project?.customer_name ?? op.customerName,
@@ -72,7 +73,8 @@ export function draftTrial(op: Extract<Op, { kind: 'create_trial' }>, project?: 
     cast_at: op.castAt ?? null, free_wc: null, strength_28d: null, created_by_name: null, created_at: op.createdAt, updated_at: op.createdAt,
     grade_of_concrete: null, sieves: {}, proportions: {}, batch_size: null, admixture_1: null, dosage_1: null, admixture_2: null, dosage_2: null,
     materials: {}, fresh_test: '', fresh_readings: {}, fresh_density: null, bleeding: null, setting: null, scc: {},
-    remarks: '', signatory_sales: '', signatory_site_qc: '', signatory_rd: '', signature_sales: '', signature_site_qc: '', signature_rd: '',
+    // The server fills this from the project's creator on sync; shown the same way until then.
+    remarks: '', signatory_sales: project?.created_by?.name ?? project?.sales_person?.name ?? '', signatory_site_qc: '', signatory_rd: '', signature_sales: '', signature_site_qc: '', signature_rd: '',
     started_at: null, closed_at: null, results: EMPTY_RESULTS, cementitious_kg: null, cube_sets: [], attachments: [],
     actions: { edit: true, start: true, close: false, edit_cubes: true, delete: false, attach: true },
   }

@@ -557,14 +557,15 @@ export type ConclusionForm = {
 export function conclusionForm(t: Trial, project?: Project): ConclusionForm {
   return {
     remarks: t.remarks ?? '',
-    signatory_sales: t.signatory_sales || project?.sales_person?.name || '',
+    // The server fills this from the project's creator; it is shown, never typed.
+    signatory_sales: t.signatory_sales || project?.created_by?.name || project?.sales_person?.name || '',
     signatory_site_qc: t.signatory_site_qc ?? '', signatory_rd: t.signatory_rd ?? '',
     signature_sales: t.signature_sales ?? '', signature_site_qc: t.signature_site_qc ?? '', signature_rd: t.signature_rd ?? '',
   }
 }
-export const conclusionPayload = (f: ConclusionForm) => ({
+export const conclusionPayload = ({ signatory_sales: _filledByServer, ...f }: ConclusionForm) => ({
   ...f,
-  signatory_sales: f.signatory_sales.trim(), signatory_site_qc: f.signatory_site_qc.trim(), signatory_rd: f.signatory_rd.trim(),
+  signatory_site_qc: f.signatory_site_qc.trim(), signatory_rd: f.signatory_rd.trim(),
 })
 
 /** Signatory names are at most 150 characters (server column); signatures at most 400,000 characters of PNG data. */

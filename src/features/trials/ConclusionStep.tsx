@@ -133,7 +133,6 @@ export function ConclusionStep({ readOnly, banners }: { readOnly: boolean; banne
   }
   const cancelRevise = () => { setRevising(false); setOutcome(trial.outcome); setOutcomeError(null); setForm((f) => ({ ...f, remarks: trial.remarks ?? '' })) }
 
-  const salesPerson = project?.sales_person?.name
   const footer = revising ? (
     <StepFooter note="Saved with the remarks. The project timeline records the change.">
       <Button title="Cancel" onPress={cancelRevise} style={{ flex: 1 }} />
@@ -216,7 +215,7 @@ export function ConclusionStep({ readOnly, banners }: { readOnly: boolean; banne
       <Section title="Signatures">
         {SIGNATORIES.map((s) => (
           <View key={s.name} style={{ gap: 8, paddingBottom: 6 }}>
-            <Field label={s.label} error={errors[s.name]} hint={s.name === 'signatory_sales' ? `The project's Sales Person${salesPerson ? '' : ' (none set)'}; not editable, as in the old app.` : undefined}>
+            <Field label={s.label} error={errors[s.name]} hint={s.name === 'signatory_sales' ? (form.signatory_sales ? 'The person who created the project. Filled in automatically.' : 'No creator recorded on the project.') : undefined}>
               <TextField accessibilityLabel={`${s.label}, name`} placeholder="Name" value={form[s.name]} editable={!readOnly && s.name !== 'signatory_sales'} invalid={!!errors[s.name]} maxLength={SIGNATORY_MAX}
                 onChangeText={(v) => setForm((f) => ({ ...f, [s.name]: v }))} />
             </Field>
