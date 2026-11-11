@@ -6,6 +6,7 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import { errorMessage, statusOf } from '@/api/errors'
+import { matchOptions } from '@/shared/matchOptions'
 import type { CheckStatus, Outcome, ProjectStatus, TrialStatus } from '@/shared/types'
 
 import { color, font, radius, TOUCH } from './theme'
@@ -172,6 +173,87 @@ export function Chips<T extends string | number>({ options, value, onChange, lab
   )
 }
 
+/**
+ * Searchable multi select for long master lists (cement brands, grades of concrete, cementitious
+ * content...). The field shows the chosen values as tags (tap × to remove one); tapping the field
+ * opens a full screen list with a search box and a tick per value.
+ */
+export function MultiPicker<T extends string | number>({ label, value, options, onChange, invalid, max, loading, placeholder = 'Choose' }: {
+  label: string; value: T[]; options: { value: T; label: string }[]; onChange: (v: T[]) => void
+  invalid?: boolean; max?: number; loading?: boolean; placeholder?: string
+}) {
+  const [open, setOpen] = useState(false)
+  const [query, setQuery] = useState('')
+  const byValue = new Map(options.map((o) => [o.value, o]))
+  const chosen = value.map((v) => byValue.get(v) ?? { value: v, label: String(v) })
+  const shown = matchOptions(options, query)
+  const full = max !== undefined && value.length >= max
+  const close = () => { setOpen(false); setQuery('') }
+  const toggle = (v: T) => {
+    const on = value.includes(v)
+    if (!on && full) return
+    onChange(on ? value.filter((x) => x !== v) : [...value, v])
+  }
+  const summary = chosen.length ? chosen.map((o) => o.label).join(', ') : 'none chosen'
+  return (
+    <>
+      <Pressable accessibilityRole="button" accessibilityLabel={`${label}: ${summary}`} accessibilityHint="Opens a searchable list"
+        disabled={loading} onPress={() => setOpen(true)}
+        style={[s.input, { paddingVertical: 6, flexWrap: 'wrap' }, invalid && s.inputInvalid]}>
+        {loading ? <Text style={[s.inputText, { color: color.muted }]}>Loading…</Text>
+          : chosen.length === 0 ? <Text style={[s.inputText, { color: color.muted }]}>{placeholder}</Text>
+            : (
+              <View style={{ flex: 1, flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                {chosen.map((o) => (
+                  <View key={String(o.value)} style={s.tag}>
+                    <Text style={s.tagText} numberOfLines={1}>{o.label}</Text>
+                    <Pressable accessibilityRole="button" accessibilityLabel={`Remove ${o.label}`} hitSlop={10}
+                      onPress={() => onChange(value.filter((x) => x !== o.value))} style={s.tagX}>
+                      <Text style={s.tagXText}>×</Text>
+                    </Pressable>
+                  </View>
+                ))}
+              </View>
+            )}
+        <Text style={s.muted}>⌄</Text>
+      </Pressable>
+      <Modal visible={open} animationType="slide" onRequestClose={close}>
+        <SafeAreaView style={{ flex: 1, backgroundColor: color.surface }}>
+          <Row style={{ paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1, borderColor: color.divider }}>
+            <H2 style={{ flex: 1 }}>{label}</H2>
+            <Button title="Done" variant="tertiary" onPress={close} />
+          </Row>
+          <View style={{ padding: 16, paddingBottom: 8 }}>
+            <TextField accessibilityLabel={`Search ${label}`} placeholder="Search" value={query} onChangeText={setQuery}
+              autoCorrect={false} autoCapitalize="none" clearButtonMode="while-editing" returnKeyType="search" />
+          </View>
+          <FlatList data={shown} keyExtractor={(o) => String(o.value)} keyboardShouldPersistTaps="handled" initialNumToRender={30}
+            ListEmptyComponent={options.length
+              ? <View style={{ padding: 16 }}><Body>{`Nothing matches "${query}".`}</Body></View>
+              : <EmptyState title="No values yet" body="An Admin can add them in Master data." />}
+            renderItem={({ item }) => {
+              const on = value.includes(item.value)
+              const off = !on && full
+              return (
+                <Pressable accessibilityRole="checkbox" accessibilityLabel={item.label} accessibilityState={{ checked: on, disabled: off }}
+                  disabled={off} onPress={() => toggle(item.value)} style={[s.option, { gap: 12 }, off && { opacity: 0.45 }]}>
+                  <View style={[s.box, on && { backgroundColor: color.ink, borderColor: color.ink }]}>
+                    {on ? <Text style={{ color: '#fff', fontSize: 14, lineHeight: 16 }}>✓</Text> : null}
+                  </View>
+                  <Body style={{ flex: 1, fontFamily: on ? font.semibold : font.regular }}>{item.label}</Body>
+                </Pressable>
+              )
+            }} />
+          <Row style={{ paddingHorizontal: 16, paddingVertical: 10, borderTopWidth: 1, borderColor: color.divider, backgroundColor: color.head }}>
+            <Small style={{ flex: 1 }}>{value.length} selected{max !== undefined ? `, up to ${max}` : ''}</Small>
+            {value.length > 0 ? <Button title="Clear" variant="tertiary" onPress={() => onChange([])} /> : null}
+          </Row>
+        </SafeAreaView>
+      </Modal>
+    </>
+  )
+}
+
 // --- Status --------------------------------------------------------------------------------
 const PROJECT_LABEL: Record<ProjectStatus, string> = {
   draft: 'Draft', created: 'Created', support_requested: 'Support requested', assigned_to_ct: 'Assigned to CT',
@@ -249,6 +331,11 @@ export const s = StyleSheet.create({
   option: { minHeight: 52, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center', borderBottomWidth: 1, borderColor: color.divider },
   chip: { minHeight: 40, paddingHorizontal: 14, borderRadius: 20, borderWidth: 1, borderColor: color.field, backgroundColor: color.surface, justifyContent: 'center' },
   chipText: { fontFamily: font.semibold, fontSize: 14, color: color.ink },
+  tag: { flexDirection: 'row', alignItems: 'center', maxWidth: '100%', minHeight: 30, borderRadius: 15, borderWidth: 1, borderColor: color.line, backgroundColor: color.head, paddingLeft: 10, paddingRight: 2 },
+  tagText: { flexShrink: 1, fontFamily: font.semibold, fontSize: 14, color: color.ink },
+  tagX: { width: 26, height: 26, alignItems: 'center', justifyContent: 'center' },
+  tagXText: { fontSize: 18, lineHeight: 20, color: color.subtle },
+  box: { width: 22, height: 22, borderRadius: 4, borderWidth: 1.5, borderColor: color.field, alignItems: 'center', justifyContent: 'center', backgroundColor: color.surface },
   pill: { alignSelf: 'flex-start', height: 24, paddingHorizontal: 9, borderRadius: 12, justifyContent: 'center' },
   pillText: { fontFamily: font.semibold, fontSize: 12 },
   errorBox: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 14, borderRadius: radius.card, backgroundColor: '#FBECEB' },

@@ -10,7 +10,7 @@ import { useLookups } from '@/api/hooks'
 import { useAuth } from '@/auth/AuthProvider'
 import { phoneFilter, potentialFilter, sfdcFilter } from '@/shared/inputFilters'
 import type { Project, Ref } from '@/shared/types'
-import { Banner, Body, Button, Card, Chips, ErrorState, Field, H1, Loading, NumberField, Picker, Small, Strong, TextField } from '@/ui/kit'
+import { Banner, Body, Button, Card, Chips, ErrorState, Field, H1, Loading, MultiPicker, NumberField, Picker, Small, Strong, TextField } from '@/ui/kit'
 import { color, font, radius, TOUCH } from '@/ui/theme'
 
 import { invalidateProject, storeProject, useProject } from './api'
@@ -287,7 +287,7 @@ function LookupChips({ name, label, hint, v, e, set, project, format = (s) => s 
   const options = withCurrent(q.data, project?.[name] as Ref[]).map((o) => ({ value: o.id, label: format(o.value) }))
   return (
     <Field label={label} error={e[name]} hint={q.isError ? 'This list could not be loaded. Go back and open the form again.' : hint}>
-      {q.isLoading ? <Small>Loading…</Small> : <Chips label={label} options={options} value={v[name]} onChange={(x) => set(name, x)} />}
+      <MultiPicker label={label} options={options} value={v[name]} onChange={(x) => set(name, x)} invalid={Boolean(e[name])} loading={q.isLoading} />
     </Field>
   )
 }
@@ -407,15 +407,13 @@ export function CementitiousChips({ value, onChange, error, current }: {
   value: number[]; onChange: (v: number[]) => void; error?: string; current: number[]
 }) {
   const q = useLookups('cementitious_content')
-  const full = value.length >= CEMENTITIOUS_MAX
   const options = cementitiousOptions(q.data, [...current, ...value])
   const label = 'Cementitious content, kg/m³'
   return (
     <Field label={label} error={error}
-      hint={q.isError ? 'This list could not be loaded. Go back and open the form again.' : full ? `Up to ${CEMENTITIOUS_MAX} values.` : 'Select each total binder the customer runs'}>
-      {q.isLoading ? <Small>Loading…</Small>
-        : <Chips label={label} options={options} value={value}
-          onChange={(x) => { if (x.length <= CEMENTITIOUS_MAX) onChange([...x].sort((a, b) => a - b)) }} />}
+      hint={q.isError ? 'This list could not be loaded. Go back and open the form again.' : `Each total binder the customer runs, up to ${CEMENTITIOUS_MAX}`}>
+      <MultiPicker label={label} options={options} value={value} max={CEMENTITIOUS_MAX} invalid={Boolean(error)} loading={q.isLoading}
+        onChange={(x) => { if (x.length <= CEMENTITIOUS_MAX) onChange([...x].sort((a, b) => a - b)) }} />
     </Field>
   )
 }

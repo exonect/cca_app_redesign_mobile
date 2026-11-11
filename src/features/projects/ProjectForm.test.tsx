@@ -220,7 +220,14 @@ describe('project form, final server rules', () => {
     await render(wrap(<ProjectForm project={p} />))
     await fireEvent.press(screen.getByRole('button', { name: 'Continue' }))
     expect(await screen.findByText('380 (not in the list)')).toBeTruthy()
+    // A searchable list that opens full screen, not a wall of chips.
+    expect(screen.queryByRole('checkbox', { name: '450' })).toBeNull()
+    await fireEvent.press(screen.getByRole('button', { name: /^Cementitious content, kg\/m³: 380 \(not in the list\)$/ }))
+    await fireEvent.changeText(screen.getByLabelText('Search Cementitious content, kg/m³'), '45')
+    expect(screen.queryByRole('checkbox', { name: '420' })).toBeNull()
     await fireEvent.press(screen.getByRole('checkbox', { name: '450' }))
+    await fireEvent.press(screen.getByRole('button', { name: 'Done' }))
+    expect(screen.getByRole('button', { name: 'Remove 450' })).toBeTruthy()
     await fireEvent.press(screen.getByRole('button', { name: 'Save draft' }))
     await waitFor(() => expect(mockApi).toHaveBeenCalledWith('/projects/p1/', expect.objectContaining({
       method: 'PATCH', body: expect.objectContaining({ cementitious_contents: [380, 450] }),
