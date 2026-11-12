@@ -94,7 +94,9 @@ export type TrialListItem = {
 }
 
 export type SieveRow = { sieve: string; retained: string | number | null }
-export type MaterialInput = { ssd?: string | number | null; absorption?: string | number | null; moisture?: string | number | null; source?: string; cement_type?: string }
+export type MaterialInput = { ssd?: string | number | null; absorption?: string | number | null; moisture?: string | number | null; source?: string; cement_type?: string
+  /** The Mineral Admixture master name a mineral row was added under. */
+  name?: string }
 
 export type CheckStatus = 'met' | 'not_met' | 'pending'
 export type TrialResults = {

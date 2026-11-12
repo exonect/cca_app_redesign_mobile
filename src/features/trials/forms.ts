@@ -5,7 +5,7 @@
  * Same rules as the web app (src/features/trials/forms.ts there).
  */
 import { fieldErrors, fieldErrorsByPath } from '@/api/errors'
-import { AGES, AGGREGATES, analyse, MATERIAL_LABEL, MATERIALS, SIEVE_LABEL, SIEVE_SETS } from '@/shared/calc'
+import { AGES, AGGREGATES, analyse, isExtraMineral, isMineral, materialLabel, materialOrder, MATERIALS, mineralKey, SIEVE_LABEL, SIEVE_SETS } from '@/shared/calc'
 import type { FieldNote, Project, Trial } from '@/shared/types'
 
 import { CAST_ERRORS, castIso, castParts, dayIso, isFutureDay, istToday } from './castAt'
@@ -302,25 +302,50 @@ export function sieveProblems(f: SieveForm): Record<string, string> {
 export const proportionTotal = (f: SieveForm) => decimalTotal(SIEVE_MATERIALS.map((m) => f.proportions[m]))
 
 // --- Step 2 ------------------------------------------------------------------------
-export type MaterialEntry = { ssd: string; absorption: string; moisture: string; source: string; cement_type: string }
+export type MaterialEntry = { ssd: string; absorption: string; moisture: string; source: string; cement_type: string; name: string }
 export type MixForm = {
   cast_date: string; cast_time: string; grade_of_concrete: string; batch_size: string
   admixture_1: string; dosage_1: string; admixture_2: string; dosage_2: string
   materials: Record<string, MaterialEntry>
+  /** Mineral admixture rows on this trial (UAT, 12 Nov 2026): the table starts at cement and the user
+   * adds and removes these from the Mineral Admixture list. */
+  minerals: string[]
+}
+
+const EMPTY_MATERIAL: MaterialEntry = { ssd: '', absorption: '', moisture: '', source: '', cement_type: '', name: '' }
+const filledRow = (x: Record<string, unknown> | undefined) => !!x && Object.values(x).some((v) => v !== null && v !== undefined && String(v).trim() !== '')
+
+/** The rows the table shows, in order: added mineral admixtures, then cement to water. */
+export const mixRows = (f: MixForm) => materialOrder(f.materials).filter((m) => !isMineral(m) || f.minerals.includes(m))
+
+/** Adds the mineral admixture chosen from the master list (its slot, or its own row). */
+export function addMineral(f: MixForm, name: string): MixForm {
+  const key = mineralKey(name)
+  if (!key || f.minerals.includes(key)) return f
+  return { ...f, minerals: [...f.minerals, key], materials: { ...f.materials, [key]: { ...EMPTY_MATERIAL, name: name.trim() } } }
+}
+
+/** Removes a mineral admixture row; its values go with it. */
+export function removeMineral(f: MixForm, key: string): MixForm {
+  return { ...f, minerals: f.minerals.filter((m) => m !== key), materials: { ...f.materials, [key]: { ...EMPTY_MATERIAL } } }
 }
 
 export function mixForm(t: Trial): MixForm {
   const cast = castParts(t.cast_at)
+  const stored = (t.materials ?? {}) as Record<string, Record<string, unknown> | undefined>
+  const keys = [...MATERIALS, ...Object.keys(stored).filter(isExtraMineral)]
   return {
     cast_date: cast.date, cast_time: cast.time,
     grade_of_concrete: str(t.grade_of_concrete?.id),
     batch_size: str(t.batch_size),
     admixture_1: str(t.admixture_1?.id), dosage_1: str(t.dosage_1),
     admixture_2: str(t.admixture_2?.id), dosage_2: str(t.dosage_2),
-    materials: Object.fromEntries(MATERIALS.map((m) => {
-      const x = t.materials?.[m] ?? {}
-      return [m, { ssd: str(x.ssd), absorption: str(x.absorption), moisture: str(x.moisture), source: str(x.source), cement_type: str(x.cement_type) }]
+    materials: Object.fromEntries(keys.map((m) => {
+      const x = stored[m] ?? {}
+      return [m, { ssd: str(x.ssd), absorption: str(x.absorption), moisture: str(x.moisture), source: str(x.source), cement_type: str(x.cement_type), name: str(x.name) }]
     })),
+    // A mineral row shows when the trial holds anything for it (imported history included).
+    minerals: keys.filter((m) => isMineral(m) && filledRow(stored[m])),
   }
 }
 
@@ -350,9 +375,9 @@ export function mixProblems(f: MixForm, status?: Trial['status']): Record<string
   }
   const batch = decimalProblem(f.batch_size, { label: 'the batch size', min: 0, decimals: 4, maxDigits: 7 })
   if (batch) out.batch_size = batch
-  for (const m of MATERIALS) {
+  for (const m of mixRows(f)) {
     const x = f.materials[m]
-    const name = MATERIAL_LABEL[m] ?? m
+    const name = materialLabel(m, f.materials)
     for (const [k, label, max, unit] of MATERIAL_RANGES) {
       if (k !== 'ssd' && !AGGREGATES.includes(m)) continue // only aggregates send absorption and moisture
       const p = rangeProblem(x?.[k], max)
@@ -373,12 +398,14 @@ export function mixProblems(f: MixForm, status?: Trial['status']): Record<string
 
 export function mixPayload(f: MixForm) {
   const materials: Record<string, Record<string, string | null>> = {}
-  for (const m of MATERIALS) {
+  for (const m of mixRows(f)) {
     const x = f.materials[m] // admixture rows carry the quantity typed, as in the legacy app
     const row: Record<string, string | null> = { ssd: orNull(x.ssd) }
     if (AGGREGATES.includes(m)) { row.absorption = orNull(x.absorption); row.moisture = orNull(x.moisture) }
     if (x.source) row.source = x.source
     if (m === 'cement' && x.cement_type) row.cement_type = x.cement_type
+    // An added mineral row is kept even before its values are in (it then needs its source to start).
+    if (isMineral(m) && x.name.trim()) row.name = x.name.trim()
     if (Object.values(row).some((v) => v !== null)) materials[m] = row
   }
   const cast = castIso(f.cast_date, f.cast_time)
@@ -400,7 +427,7 @@ export function mixSoftWarnings(f: MixForm): Record<string, string> {
   add('dosage_1', softWarning('dosage', f.dosage_1, 'Dosage of admixture I'))
   add('dosage_2', softWarning('dosage', f.dosage_2, 'Dosage of admixture II'))
   add('batch_size', softWarning('batch_size', f.batch_size))
-  for (const m of MATERIALS) add(`materials.${m}.ssd`, softWarning('ssd', f.materials[m]?.ssd, `SSD design of ${MATERIAL_LABEL[m] ?? m}`))
+  for (const m of mixRows(f)) add(`materials.${m}.ssd`, softWarning('ssd', f.materials[m]?.ssd, `SSD design of ${materialLabel(m, f.materials)}`))
   const s20 = (f.materials['20mm']?.source ?? '').trim(), s10 = (f.materials['10mm']?.source ?? '').trim()
   if (s20 && s10 && s20.toLowerCase() !== s10.toLowerCase()) {
     out['materials.20mm.source'] = 'The 20 mm and 10 mm sources are not equal. The trial cannot start until they match.'
@@ -648,7 +675,9 @@ export function requirementTargets(p: Project | undefined) {
 /** Which steps are complete, for the header progress bar and the step switcher. */
 export function stepDone(t: Trial, p: Project | undefined): boolean[] {
   const r = t.results ?? ({} as Trial['results'])
-  const sieveDone = SIEVE_MATERIALS.every((m) => r.sieves?.[m]?.complete) && (r.grading?.length ?? 0) > 0
+  // Step 1 needs 20 mm, 10 mm and one sand (either), as its rule to move ahead.
+  const has = (m: SieveMaterial) => !!r.sieves?.[m]?.complete
+  const sieveDone = has('20mm') && has('10mm') && (has('river_sand') || has('crushed_sand')) && (r.grading?.length ?? 0) > 0
   const target = requirementTargets(p).retention
   const at = target ? t.fresh_readings?.[String(target.minutes)] : null
   const freshDone = at !== null && at !== undefined && at !== ''
@@ -691,8 +720,11 @@ export function localCompleteness(t: Trial): FieldNote[] {
   const row = (m: string) => (mats[m] && typeof mats[m] === 'object' ? mats[m]! : {})
   const src = (m: string) => String(row(m).source ?? '').trim()
   const isFilled = (m: string) => !!src(m) || (num0(row(m).ssd) !== null && num0(row(m).ssd) !== 0)
-  const label = (m: string) => MATERIAL_LABEL[m] ?? m
-  for (const m of COMPLETENESS_MINERALS) if (isFilled(m) && !src(m)) add(`materials.${m}.source`, `${label(m)}: mineral admixture source is required.`)
+  const label = (m: string) => materialLabel(m, mats)
+  // Every mineral admixture row added to the trial needs its source (legacy), and so does a slot with a value.
+  for (const m of [...COMPLETENESS_MINERALS, ...Object.keys(mats).filter(isExtraMineral).sort()]) {
+    if ((isFilled(m) || String(row(m).name ?? '').trim()) && !src(m)) add(`materials.${m}.source`, `${label(m)}: mineral admixture source is required.`)
+  }
   if (!src('cement')) add('materials.cement.source', 'Cement brand is required.')
   if (!String(row('cement').cement_type ?? '').trim()) add('materials.cement.cement_type', 'Type of cement is required.')
   if (!positive(row('cement').ssd)) add('materials.cement.ssd', 'Cement SSD design should be more than zero.')
@@ -752,7 +784,7 @@ export function pathLabel(path: string, body?: Record<string, unknown>): string 
   }
   if (head === 'proportions') return `${SIEVE_MATERIAL_LABEL[a as SieveMaterial] ?? a} proportion`
   if (head === 'materials') {
-    const m = MATERIAL_LABEL[a] ?? a
+    const m = materialLabel(a, body?.materials as Record<string, { name?: unknown }> | undefined)
     return b ? `${m} ${MATERIAL_KEY_LABEL[b] ?? b}` : m
   }
   if (head === 'fresh_readings') return `Reading at ${readingLabel(a).toLowerCase()}`

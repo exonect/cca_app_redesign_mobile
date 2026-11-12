@@ -119,14 +119,54 @@ export const MATERIAL_LABEL: Record<string, string> = {
   admixture_1: 'Admixture I', admixture_2: 'Admixture II',
 }
 
-type MixIn = Record<string, { ssd?: unknown; absorption?: unknown; moisture?: unknown } | undefined>
+/**
+ * Mineral admixtures are added to a trial from the Mineral Admixture master list (UAT, 12 Nov 2026; the
+ * legacy drop down). A name that is one of the slots above uses that slot, so W/C and cementitious work as
+ * before; any other (Metakoalin, Crystalline, Nanofine ...) is its own row, keyed "mineral:<name>", with the
+ * master name in the row. Those are like Fiber: no correction, in the totals and batch weights, not in W/C
+ * or cementitious. Same rules as the server (cca/calc/mix.py).
+ */
+export const EXTRA_MINERAL = /^mineral:[a-z0-9_]{1,40}$/
+export const isExtraMineral = (k: string) => EXTRA_MINERAL.test(k)
+export const isMineral = (k: string) => MINERAL_ADMIXTURES.includes(k) || isExtraMineral(k)
+const SLOT: Record<string, string> = {
+  flyash: 'fly_ash', fly: 'fly_ash', ggbs: 'ggbs', ggbfs: 'ggbs', alcofine: 'alcofine', alkophine: 'alcofine',
+  microsilica: 'microsilica', silicafume: 'microsilica', silicafumes: 'microsilica',
+  fiber: 'fiber', fibre: 'fiber', fibers: 'fiber', fibres: 'fiber',
+}
+const fold = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '')
+/** Master name -> material key: its slot ("FLYASH" -> fly_ash), else "mineral:<name>". */
+export function mineralKey(name: string): string | null {
+  const slot = SLOT[fold(name)]
+  if (slot) return slot
+  const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40).replace(/_+$/, '')
+  return slug ? `mineral:${slug}` : null
+}
+type Named = Record<string, { name?: unknown } | undefined>
+/** Plain label: "Fly ash"; a slot added under another master name ("ALKOPHINE") or an added mineral shows that name. */
+export function materialLabel(m: string, materials?: Named): string {
+  const raw = materials?.[m]?.name
+  const name = typeof raw === 'string' ? raw.trim() : ''
+  if (MATERIAL_LABEL[m]) return name && MINERAL_ADMIXTURES.includes(m) && fold(name) !== fold(MATERIAL_LABEL[m]) ? name : MATERIAL_LABEL[m]
+  if (name) return name
+  return isExtraMineral(m) ? m.slice('mineral:'.length).replace(/_/g, ' ').toUpperCase() : m
+}
+/** Row order: the mineral slots, added minerals (by name), cement, aggregates, admixtures, water. */
+export function materialOrder(materials: Named = {}): string[] {
+  const extras = Object.keys(materials).filter(isExtraMineral)
+    .sort((a, b) => materialLabel(a, materials).toLowerCase().localeCompare(materialLabel(b, materials).toLowerCase()))
+  return [...MINERAL_ADMIXTURES, ...extras, 'cement', ...AGGREGATES, 'admixture_1', 'admixture_2', 'water']
+}
+
+type MixIn = Record<string, { ssd?: unknown; absorption?: unknown; moisture?: unknown; name?: unknown } | undefined>
 export type MixLine = { material: string; ssd: number | null; difference: number | null; correction: number | null; adjusted: number | null; batch: number | null }
 
 export function mix(materials: MixIn, batchSize: unknown) {
   const batch = n(batchSize)
   const lines: Record<string, MixLine> = {}
   const raw: number[] = []
-  for (const m of MATERIALS) {
+  const order = materialOrder(materials)
+  for (const m of order) {
     const d = materials[m] ?? {}
     const ssd = n(d.ssd)
     const line: MixLine = { material: m, ssd, difference: null, correction: null, adjusted: null, batch: null }
@@ -152,7 +192,7 @@ export function mix(materials: MixIn, batchSize: unknown) {
   const binderSsd = WC_BINDERS.reduce((s, b) => s + (lines[b].ssd ?? 0), 0)
   const binderAdj = WC_BINDERS.reduce((s, b) => s + (lines[b].adjusted ?? 0), 0)
   return {
-    lines: MATERIALS.map((m) => lines[m]), totalSsd: sum('ssd'), totalAdjusted: sum('adjusted'), totalBatch: sum('batch'),
+    lines: order.map((m) => lines[m]), totalSsd: sum('ssd'), totalAdjusted: sum('adjusted'), totalBatch: sum('batch'),
     freeWc: water.ssd !== null && binderSsd ? r2(water.ssd / binderSsd) : null,
     totalWc: water.adjusted !== null && binderAdj ? r2(water.adjusted / binderAdj) : null,
   }

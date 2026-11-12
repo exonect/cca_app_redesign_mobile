@@ -519,3 +519,39 @@ describe('step 1 rules (UAT, 12 Nov 2026)', () => {
     expect(mockSetParams).not.toHaveBeenCalledWith({ step: '1', why: 'sieves' })
   })
 })
+
+describe('mineral admixtures (UAT, 12 Nov 2026)', () => {
+  const MINERAL_LIST = ['CRYSTALLINE', 'FLYASH', 'GGBS', 'METAKOALIN'].map((value, i) => ({ id: 70 + i, value }))
+  const lookups = (path: string, opts?: { query?: { category?: string } }) =>
+    path === '/lookups/' && opts?.query?.category === 'mineral_admixture' ? MINERAL_LIST : undefined
+  const draft = (over: Partial<Trial> = {}) => makeTrial({
+    ...STEP1, status: 'draft', code: null, materials: { cement: { ssd: '300' }, water: { ssd: '160' } },
+    actions: { edit: true, start: true, close: false, edit_cubes: true, delete: false, attach: true }, ...over,
+  })
+  const rowLabels = () => screen.getAllByRole('button').map((b) => String(b.props.accessibilityLabel ?? ''))
+    .filter((l) => /, adjusted /.test(l)).map((l) => l.split(',')[0])
+
+  it('starts the materials at cement and adds a chosen mineral admixture above it, removable', async () => {
+    const t = draft()
+    serve(t, (path, opts) => lookups(path, opts as never) ?? (opts?.method === 'PATCH' ? { ...t, updated_at: new Date().toISOString() } : undefined))
+    await open(2)
+    await waitFor(() => expect(rowLabels()[0]).toBe('Cement'))
+    await fireEvent.press(await screen.findByRole('button', { name: 'Mineral admixture: not chosen' }))
+    await fireEvent.press(await screen.findByText('METAKOALIN'))
+    await waitFor(() => expect(rowLabels().slice(0, 2)).toEqual(['METAKOALIN', 'Cement']))
+    // The new row opens: enter its SSD, then remove it.
+    await fireEvent.changeText(screen.getByLabelText('METAKOALIN SSD design, kilograms per cubic metre'), '20')
+    await fireEvent.press(screen.getByRole('button', { name: 'Remove METAKOALIN' }))
+    await waitFor(() => expect(rowLabels()[0]).toBe('Cement'))
+    // Added again, saved with its master name.
+    await fireEvent.press(screen.getByRole('button', { name: 'Mineral admixture: not chosen' }))
+    await fireEvent.press(await screen.findByText('FLYASH'))
+    await waitFor(() => expect(rowLabels().slice(0, 2)).toEqual(['Fly ash', 'Cement']))
+    await fireEvent.changeText(screen.getByLabelText('Fly ash SSD design, kilograms per cubic metre'), '80')
+    await fireEvent.press(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(mockApi).toHaveBeenCalledWith('/trials/t-1/', expect.objectContaining({ method: 'PATCH' })))
+    const body = mockApi.mock.calls.find((c) => c[1]?.method === 'PATCH')![1].body
+    expect(body.materials.fly_ash).toEqual({ ssd: '80', name: 'FLYASH' })
+    expect(body.materials).not.toHaveProperty('mineral:metakoalin')
+  })
+})

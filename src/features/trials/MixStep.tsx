@@ -8,26 +8,25 @@ import Svg, { Polyline } from 'react-native-svg'
 
 import { toOptions, useLookups, useProducts } from '@/api/hooks'
 import { useAuth } from '@/auth/AuthProvider'
-import { admixtureQty, AGGREGATES, BINDERS, cementitious, f2, MATERIAL_LABEL, MATERIALS, MINERAL_ADMIXTURES, mix, n, OTHER_MINERALS, type MixLine } from '@/shared/calc'
+import { admixtureQty, AGGREGATES, cementitious, f2, isMineral, MATERIAL_LABEL, materialLabel, mineralKey, mix, n, type MixLine } from '@/shared/calc'
 import type { Lookup, Trial } from '@/shared/types'
 import { Banner, Field, Picker, Screen, Small, TextField } from '@/ui/kit'
 import { color, font, TOUCH } from '@/ui/theme'
 
 import { CastAtField } from './CastAtField'
 import { num } from './format'
-import { LIMITS, mixForm, mixPayload, mixProblems, mixSoftWarnings, outOfRange, withCoarseSource, type MaterialEntry, type MixForm } from './forms'
+import { addMineral, LIMITS, mixForm, mixPayload, mixProblems, mixRows, mixSoftWarnings, outOfRange, removeMineral, withCoarseSource, type MaterialEntry, type MixForm } from './forms'
 import { onNewFormulation, takeNewFormulation } from './newFormulation'
 import { CellInput, cell, Output, Section, SourceNote, StepActions, TableHead, TickIcon, WarnIcon, WarnText } from './parts'
 import { useStepForm, useWorkspace } from './workspace'
 
-const MINERALS = MINERAL_ADMIXTURES
 const COARSE = ['20mm', '10mm']
 const FINE = ['river_sand', 'crushed_sand']
 
 /** Which master list feeds the source of each material (none for water and admixtures). */
 export function sourceCategory(material: string): string | null {
   if (material === 'cement') return 'cement_brand'
-  if (MINERALS.includes(material)) return 'mineral_admixture_source'
+  if (isMineral(material)) return 'mineral_admixture_source'
   if (COARSE.includes(material)) return 'coarse_aggregate_source'
   if (FINE.includes(material)) return 'fine_aggregate_source'
   return null
@@ -80,6 +79,7 @@ export function MixStep({ readOnly, banners }: { readOnly: boolean; banners: Rea
   const [second, setSecond] = useState(() => !!trial.admixture_2)
   const products = useProducts()
   const grades = useLookups('grade_of_concrete')
+  const mineralList = useLookups('mineral_admixture')
   const lists: Record<string, { data?: Lookup[] }> = {
     cement_brand: useLookups('cement_brand'),
     cement_grade: useLookups('cement_grade'),
@@ -95,8 +95,14 @@ export function MixStep({ readOnly, banners }: { readOnly: boolean; banners: Rea
   const setSource = (m: string, v: string) => (m === '20mm' || m === '10mm' ? setForm((f) => withCoarseSource(f, m, v)) : setMat(m, 'source', v))
 
   // Live preview. Admixture quantities are the ones typed (legacy rule); the dosage only suggests one.
-  const binder = cementitious(form.materials)
-  const live = mix(form.materials, form.batch_size)
+  // Only the rows on the table count: a mineral admixture removed from it is not in the mix.
+  const rows = mixRows(form)
+  const inUse = Object.fromEntries(rows.map((m) => [m, form.materials[m]]))
+  const binder = cementitious(inUse)
+  const live = mix(inUse, form.batch_size)
+  // The Mineral Admixture master list, less those already on the table (legacy drop down).
+  const mineralOptions = (mineralList.data ?? []).filter((o) => { const k = mineralKey(o.value); return k && !form.minerals.includes(k) })
+    .map((o) => ({ value: o.value, label: o.value }))
   const fromServer = !dirty && !!trial.results?.mix
   const server = fromServer ? serverLines(trial) : null
   const lines = Object.fromEntries(live.lines.map((l) => [l.material, server?.[l.material] ?? l]))
@@ -196,21 +202,30 @@ export function MixStep({ readOnly, banners }: { readOnly: boolean; banners: Rea
               </View>
             )} />
         </View>
+        {!readOnly && (
+          <Field label="Mineral admixture" hint={mineralList.isError ? 'The list could not be loaded. Go back and open the trial again.'
+            : mineralList.data && !mineralOptions.length ? (mineralList.data.length ? 'All of them are in the materials.' : 'No mineral admixtures yet. An Admin can add them in Master data.')
+              : 'Adds a row above cement in the materials.'}>
+            <Picker label="Mineral admixture" placeholder="Add a mineral admixture" value={null} options={mineralOptions}
+              disabled={!mineralOptions.length} onChange={(v) => { if (v) { setForm((f) => addMineral(f, v)); setOpen(mineralKey(v)) } }} />
+          </Field>
+        )}
       </Section>
 
       <Section flush title="Materials per m³" aside={<Small>Tap a material to edit</Small>}>
         <TableHead cols={['Material', 'Adjusted, kg', 'Batch, kg', '']} template={COLS} />
-        {MATERIALS.map((m) => {
+        {rows.map((m) => {
           const l = lines[m]
           const entry = form.materials[m]
           const agg = AGGREGATES.includes(m)
           const admix = m === 'admixture_1' || m === 'admixture_2'
           const product = admix ? productLabel(form[m]) : ''
           if (m === 'admixture_2' && !form.admixture_2 && !l.ssd) return null
-          const name = admix ? (product || MATERIAL_LABEL[m]) : m === 'cement' && entry.cement_type ? `Cement, ${entry.cement_type}` : MATERIAL_LABEL[m]
+          const label = materialLabel(m, form.materials)
+          const mineral = isMineral(m)
+          const name = admix ? (product || label) : m === 'cement' && entry.cement_type ? `Cement, ${entry.cement_type}` : label
           const expanded = open === m
           const cat = sourceCategory(m)
-          const unused = (BINDERS.includes(m) || OTHER_MINERALS.includes(m)) && m !== 'cement' && !n(entry.ssd)
           const dose = m === 'admixture_1' ? form.dosage_1 : m === 'admixture_2' ? form.dosage_2 : ''
           // A server error on this material ("materials.cement.source"), shown on the row even while it is folded.
           const rowError = Object.entries(errors).find(([k]) => k.startsWith(`materials.${m}.`))?.[1]
@@ -224,7 +239,7 @@ export function MixStep({ readOnly, banners }: { readOnly: boolean; banners: Rea
                 <View style={cell('flex')}>
                   <Text numberOfLines={1} style={{ fontFamily: expanded ? font.semibold : font.medium, fontSize: 15, color: color.ink }}>{name}</Text>
                   {rowError ? <Small style={{ color: color.error }}>{rowError}</Small>
-                    : unused ? <Small>Not used in this trial</Small> : admix && !product ? <Small>Choose a product above</Small> : null}
+                    : mineral ? <Small>Mineral admixture</Small> : admix && !product ? <Small>Choose a product above</Small> : null}
                 </View>
                 <Text style={[num16, cell(92)]}>{f2(l.adjusted) || '–'}</Text>
                 <Text style={[num16, cell(76), { color: color.subtle }]}>{f2(l.batch) || '–'}</Text>
@@ -249,17 +264,17 @@ export function MixStep({ readOnly, banners }: { readOnly: boolean; banners: Rea
                   ) : (
                     <View style={{ flexDirection: 'row', gap: 8 }}>
                       <Labeled label="SSD design, kg">
-                        <CellInput accessibilityLabel={`${MATERIAL_LABEL[m]} SSD design, kilograms per cubic metre`} value={entry.ssd} editable={!readOnly}
+                        <CellInput accessibilityLabel={`${label} SSD design, kilograms per cubic metre`} value={entry.ssd} editable={!readOnly}
                           invalid={outOfRange(entry.ssd, LIMITS.ssd) || !!err(`materials.${m}.ssd`)} warn={!!warns[`materials.${m}.ssd`]} onChangeText={(v) => setMat(m, 'ssd', v)} />
                       </Labeled>
                       {agg && (
                         <>
                           <Labeled label="Absorption, %">
-                            <CellInput accessibilityLabel={`${MATERIAL_LABEL[m]} absorption, percent`} value={entry.absorption} editable={!readOnly}
+                            <CellInput accessibilityLabel={`${label} absorption, percent`} value={entry.absorption} editable={!readOnly}
                               invalid={outOfRange(entry.absorption, LIMITS.percent) || !!err(`materials.${m}.absorption`)} onChangeText={(v) => setMat(m, 'absorption', v)} />
                           </Labeled>
                           <Labeled label="Moisture, %">
-                            <CellInput accessibilityLabel={`${MATERIAL_LABEL[m]} moisture, percent`} value={entry.moisture} editable={!readOnly}
+                            <CellInput accessibilityLabel={`${label} moisture, percent`} value={entry.moisture} editable={!readOnly}
                               invalid={outOfRange(entry.moisture, LIMITS.percent) || !!err(`materials.${m}.moisture`)} onChangeText={(v) => setMat(m, 'moisture', v)} />
                           </Labeled>
                         </>
@@ -275,11 +290,17 @@ export function MixStep({ readOnly, banners }: { readOnly: boolean; banners: Rea
                   {m === 'water' && <Small>Reduced by the free water the aggregates bring in.</Small>}
                   {cat && (
                     <Field label="Source" error={err(`materials.${m}.source`)}>
-                      <Picker label={`${MATERIAL_LABEL[m]} source`} placeholder="Select source" value={entry.source || null} disabled={readOnly}
+                      <Picker label={`${label} source`} placeholder="Select source" value={entry.source || null} disabled={readOnly}
                         invalid={!!err(`materials.${m}.source`)}
                         options={withCurrent((lists[cat].data ?? []).map((o) => ({ value: o.value, label: o.value })), entry.source)}
                         onChange={(v) => setSource(m, v ?? '')} />
                     </Field>
+                  )}
+                  {mineral && !readOnly && (
+                    <Pressable accessibilityRole="button" accessibilityLabel={`Remove ${label}`}
+                      onPress={() => { setForm((f) => removeMineral(f, m)); setOpen(null) }} style={{ minHeight: TOUCH, justifyContent: 'center', alignSelf: 'flex-start' }}>
+                      <Text style={{ fontFamily: font.semibold, fontSize: 15, color: color.error }}>Remove {label}</Text>
+                    </Pressable>
                   )}
                   {m === 'cement' && (
                     <Field label="Type of cement" error={err('materials.cement.cement_type')}>

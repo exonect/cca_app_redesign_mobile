@@ -51,8 +51,9 @@ describe('step payloads', () => {
   })
 
   it('mix design sends the cast date as IST ISO and the admixture quantity as typed (legacy)', () => {
-    const blankMat = { ssd: '', absorption: '', moisture: '', source: '', cement_type: '' }
+    const blankMat = { ssd: '', absorption: '', moisture: '', source: '', cement_type: '', name: '' }
     const f: MixForm = {
+      minerals: [],
       cast_date: '28/10/2026', cast_time: '10:15', grade_of_concrete: '4', batch_size: '0.04',
       admixture_1: '9', dosage_1: '0.9', admixture_2: '', dosage_2: '',
       materials: {
