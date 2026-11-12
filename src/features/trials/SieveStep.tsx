@@ -7,6 +7,7 @@ import { Text, View } from 'react-native'
 
 import { gradingLimitsQuery } from '@/api/hooks'
 import { analyse, combine, f2, GRADING_SIEVES, gradingAverage, n as toNumber, passingMap, SIEVE_LABEL } from '@/shared/calc'
+import { trialNumberFilter } from '@/shared/inputFilters'
 import type { Trial } from '@/shared/types'
 import { Banner, Screen, Small } from '@/ui/kit'
 import { color, font, radius } from '@/ui/theme'
@@ -109,7 +110,7 @@ export function SieveEditor({ form, setForm, errors, readOnly, results }: {
               <Text style={[{ fontFamily: font.medium, fontSize: 15, color: color.ink }, cell(76)]}>{SIEVE_LABEL[row.sieve]}</Text>
               <View style={cell('flex')}>
                 <CellInput accessibilityLabel={`Weight retained on ${SIEVE_LABEL[row.sieve]}, kilograms`} value={row.retained} editable={!readOnly}
-                  invalid={invalid} onChangeText={(v) => setRetained(i, v)} selectTextOnFocus
+                  invalid={invalid} onChangeText={(v) => setRetained(i, trialNumberFilter('retained', v))} selectTextOnFocus
                   onBlur={() => { if (row.retained.trim() === '') setRetained(i, ZERO) }} />
               </View>
               <Text testID={`pass-${row.sieve}`} style={[{ fontFamily: font.semibold, fontSize: 16, color: color.ink, textAlign: 'right', fontVariant: ['tabular-nums'] }, cell('flex')]}>
@@ -136,7 +137,7 @@ export function SieveEditor({ form, setForm, errors, readOnly, results }: {
             <View key={m} style={{ width: '47%', flexGrow: 1, gap: 4 }}>
               <Small>{SIEVE_MATERIAL_LABEL[m]}, %</Small>
               <CellInput accessibilityLabel={`${SIEVE_MATERIAL_LABEL[m]} proportion, percent`} value={form.proportions[m]} editable={!readOnly}
-                invalid={outOfRange(form.proportions[m], LIMITS.percent) || !!errors[`proportions.${m}`]} onChangeText={(v) => setProportion(m, v)} selectTextOnFocus
+                invalid={outOfRange(form.proportions[m], LIMITS.percent) || !!errors[`proportions.${m}`]} onChangeText={(v) => setProportion(m, trialNumberFilter('proportion', v))} selectTextOnFocus
                 onBlur={() => { if (form.proportions[m].trim() === '') setProportion(m, ZERO) }} />
             </View>
           ))}

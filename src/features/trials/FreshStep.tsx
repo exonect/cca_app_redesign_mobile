@@ -7,6 +7,7 @@ import { Pressable, Text, View } from 'react-native'
 
 import { useLookups } from '@/api/hooks'
 import { n } from '@/shared/calc'
+import { trialNumberFilter } from '@/shared/inputFilters'
 import type { Lookup } from '@/shared/types'
 import { Button, Field, Picker, Screen, Small, TextField } from '@/ui/kit'
 import { color, font, radius, TOUCH } from '@/ui/theme'
@@ -174,13 +175,13 @@ export function FreshStep({ readOnly, banners }: { readOnly: boolean; banners: R
         <Field label="Fresh wet density" error={errors.fresh_density}>
           <TextField accessibilityLabel="Fresh wet density, kilograms per cubic metre" unit="kg/m³" keyboardType="decimal-pad" inputMode="decimal"
             value={form.fresh_density} editable={!readOnly} invalid={!!errors.fresh_density}
-            onChangeText={(v) => set('fresh_density', v)} style={{ textAlign: 'right' }} />
+            onChangeText={(v) => set('fresh_density', trialNumberFilter('fresh_density', v))} style={{ textAlign: 'right' }} />
         </Field>
         <WarnText items={[warns.fresh_density]} />
         <Field label="Site temperature" error={errors.site_temp}>
           <TextField accessibilityLabel="Site temperature, degrees Celsius" unit="°C" keyboardType="decimal-pad" inputMode="decimal"
             value={form.site_temp} editable={!readOnly} invalid={!!errors.site_temp}
-            onChangeText={(v) => set('site_temp', v)} style={{ textAlign: 'right' }} />
+            onChangeText={(v) => set('site_temp', trialNumberFilter('site_temp', v))} style={{ textAlign: 'right' }} />
         </Field>
         <WarnText items={[warns.site_temp]} />
         <RadioLookup legend="Bleeding" options={bleeding.data ?? []} value={form.bleeding} disabled={readOnly} failed={bleeding.isError}

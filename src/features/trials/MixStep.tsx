@@ -9,6 +9,7 @@ import Svg, { Polyline } from 'react-native-svg'
 import { toOptions, useLookups, useProducts } from '@/api/hooks'
 import { useAuth } from '@/auth/AuthProvider'
 import { admixtureQty, AGGREGATES, cementitious, f2, isMineral, MATERIAL_LABEL, materialLabel, mineralKey, mix, n, type MixLine } from '@/shared/calc'
+import { trialNumberFilter } from '@/shared/inputFilters'
 import type { Lookup, Trial } from '@/shared/types'
 import { Banner, Field, Picker, Screen, Small, TextField } from '@/ui/kit'
 import { color, font, TOUCH } from '@/ui/theme'
@@ -157,13 +158,13 @@ export function MixStep({ readOnly, banners }: { readOnly: boolean; banners: Rea
           <View style={{ flex: 1 }}>
             <Field label="Dosage" error={err('dosage_1')}>
               <TextField accessibilityLabel="Dosage, percent of binder" unit="%" keyboardType="decimal-pad" inputMode="decimal" value={form.dosage_1}
-                editable={!readOnly} invalid={!!err('dosage_1')} onChangeText={(v) => set('dosage_1', v)} style={{ textAlign: 'right' }} />
+                editable={!readOnly} invalid={!!err('dosage_1')} onChangeText={(v) => set('dosage_1', trialNumberFilter('dosage', v))} style={{ textAlign: 'right' }} />
             </Field>
           </View>
           <View style={{ flex: 1 }}>
             <Field label="Batch size" error={err('batch_size')}>
               <TextField accessibilityLabel="Batch size, cubic metres" unit="m³" keyboardType="decimal-pad" inputMode="decimal" value={form.batch_size}
-                editable={!readOnly} invalid={!!err('batch_size')} onChangeText={(v) => set('batch_size', v)} style={{ textAlign: 'right' }} />
+                editable={!readOnly} invalid={!!err('batch_size')} onChangeText={(v) => set('batch_size', trialNumberFilter('batch_size', v))} style={{ textAlign: 'right' }} />
             </Field>
           </View>
         </View>
@@ -177,7 +178,7 @@ export function MixStep({ readOnly, banners }: { readOnly: boolean; banners: Rea
             <Field label="Second product dosage" error={err('dosage_2')}>
               <TextField accessibilityLabel="Second product dosage, percent of binder" unit="%" keyboardType="decimal-pad" inputMode="decimal"
                 value={form.dosage_2} editable={!readOnly && !!form.admixture_2} invalid={!!err('dosage_2')}
-                onChangeText={(v) => set('dosage_2', v)} style={{ textAlign: 'right' }} />
+                onChangeText={(v) => set('dosage_2', trialNumberFilter('dosage', v))} style={{ textAlign: 'right' }} />
             </Field>
             {!readOnly && (
               <Pressable accessibilityRole="button" onPress={() => { setSecond(false); setForm((f) => ({ ...f, admixture_2: '', dosage_2: '' })) }} style={{ minHeight: TOUCH, justifyContent: 'center' }}>
@@ -255,7 +256,7 @@ export function MixStep({ readOnly, banners }: { readOnly: boolean; banners: Rea
                     <>
                       <Labeled label="Quantity, kg/m³">
                         <CellInput accessibilityLabel={`${name} quantity, kilograms per cubic metre`} value={entry.ssd} editable={!readOnly}
-                          invalid={outOfRange(entry.ssd, LIMITS.ssd) || !!err(`materials.${m}.ssd`)} warn={!!warns[`materials.${m}.ssd`]} onChangeText={(v) => setMat(m, 'ssd', v)} />
+                          invalid={outOfRange(entry.ssd, LIMITS.ssd) || !!err(`materials.${m}.ssd`)} warn={!!warns[`materials.${m}.ssd`]} onChangeText={(v) => setMat(m, 'ssd', trialNumberFilter('ssd', v))} />
                       </Labeled>
                       <Small>{!product ? 'Choose a product above, then enter the quantity used.'
                         : suggested !== null ? `The dosage gives ${f2(suggested)} kg/m³ (dosage % of the binder). Enter the quantity used.`
@@ -265,17 +266,17 @@ export function MixStep({ readOnly, banners }: { readOnly: boolean; banners: Rea
                     <View style={{ flexDirection: 'row', gap: 8 }}>
                       <Labeled label="SSD design, kg">
                         <CellInput accessibilityLabel={`${label} SSD design, kilograms per cubic metre`} value={entry.ssd} editable={!readOnly}
-                          invalid={outOfRange(entry.ssd, LIMITS.ssd) || !!err(`materials.${m}.ssd`)} warn={!!warns[`materials.${m}.ssd`]} onChangeText={(v) => setMat(m, 'ssd', v)} />
+                          invalid={outOfRange(entry.ssd, LIMITS.ssd) || !!err(`materials.${m}.ssd`)} warn={!!warns[`materials.${m}.ssd`]} onChangeText={(v) => setMat(m, 'ssd', trialNumberFilter('ssd', v))} />
                       </Labeled>
                       {agg && (
                         <>
                           <Labeled label="Absorption, %">
                             <CellInput accessibilityLabel={`${label} absorption, percent`} value={entry.absorption} editable={!readOnly}
-                              invalid={outOfRange(entry.absorption, LIMITS.percent) || !!err(`materials.${m}.absorption`)} onChangeText={(v) => setMat(m, 'absorption', v)} />
+                              invalid={outOfRange(entry.absorption, LIMITS.percent) || !!err(`materials.${m}.absorption`)} onChangeText={(v) => setMat(m, 'absorption', trialNumberFilter('percent', v))} />
                           </Labeled>
                           <Labeled label="Moisture, %">
                             <CellInput accessibilityLabel={`${label} moisture, percent`} value={entry.moisture} editable={!readOnly}
-                              invalid={outOfRange(entry.moisture, LIMITS.percent) || !!err(`materials.${m}.moisture`)} onChangeText={(v) => setMat(m, 'moisture', v)} />
+                              invalid={outOfRange(entry.moisture, LIMITS.percent) || !!err(`materials.${m}.moisture`)} onChangeText={(v) => setMat(m, 'moisture', trialNumberFilter('percent', v))} />
                           </Labeled>
                         </>
                       )}

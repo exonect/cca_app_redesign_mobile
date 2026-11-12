@@ -14,6 +14,7 @@ import { useOnline } from '@/offline/connectivity'
 import { kick, outbox, useInFlight, useTrialOps } from '@/offline/outbox'
 import type { Op } from '@/offline/queue'
 import { queueFiles, readyToClose } from '@/offline/trialActions'
+import { nameFilter } from '@/shared/inputFilters'
 import type { Outcome, Trial } from '@/shared/types'
 import { Banner, Button, Field, OutcomeChip, Screen, Small, TextField } from '@/ui/kit'
 import { color, font, radius, TOUCH } from '@/ui/theme'
@@ -217,7 +218,7 @@ export function ConclusionStep({ readOnly, banners }: { readOnly: boolean; banne
           <View key={s.name} style={{ gap: 8, paddingBottom: 6 }}>
             <Field label={s.label} error={errors[s.name]} hint={s.name === 'signatory_sales' ? (form.signatory_sales ? 'The person who created the project. Filled in automatically.' : 'No creator recorded on the project.') : undefined}>
               <TextField accessibilityLabel={`${s.label}, name`} placeholder="Name" value={form[s.name]} editable={!readOnly && s.name !== 'signatory_sales'} invalid={!!errors[s.name]} maxLength={SIGNATORY_MAX}
-                onChangeText={(v) => setForm((f) => ({ ...f, [s.name]: v }))} />
+                onChangeText={(v) => setForm((f) => ({ ...f, [s.name]: nameFilter(v) }))} />
             </Field>
             <SignaturePad label={form[s.name] || s.label} value={form[s.sign]} disabled={readOnly} onDrawing={setDrawing}
               onChange={(v) => setForm((f) => ({ ...f, [s.sign]: v }))} />

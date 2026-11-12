@@ -368,10 +368,11 @@ describe('deleting', () => {
 })
 
 describe('error handling', () => {
-  it('stops cube text before saving and says which cube', async () => {
+  it('stops an impossible cube value before saving and says which cube', async () => {
     serve(makeTrial())
     await open(4)
-    await fireEvent.changeText(await screen.findByLabelText('7 days, cube 2 load in kilonewtons'), '7O2')
+    // Letters cannot be typed any more (UAT, 12 Nov 2026); a value above the limit is still stopped.
+    await fireEvent.changeText(await screen.findByLabelText('7 days, cube 2 load in kilonewtons'), '200000')
     await fireEvent.press(screen.getByRole('button', { name: 'Save 7 day results' }))
     expect(await screen.findAllByText(/Check cube 2\./)).not.toHaveLength(0)
     expect(mockApi).not.toHaveBeenCalledWith('/trials/t-1/cubes/7d/', expect.anything())
@@ -546,18 +547,18 @@ describe('mineral admixtures (UAT, 12 Nov 2026)', () => {
     const t = draft()
     serve(t, (path, opts) => lookups(path, opts as never) ?? (opts?.method === 'PATCH' ? { ...t, updated_at: new Date().toISOString() } : undefined))
     await open(2)
-    await waitFor(() => expect(rowLabels()[0]).toBe('Cement'))
+    await waitFor(() => expect(rowLabels()[0]).toBe('Cement'), { timeout: 5000 })
     await fireEvent.press(await screen.findByRole('button', { name: 'Mineral admixture: not chosen' }))
-    await fireEvent.press(await screen.findByText('METAKOALIN'))
-    await waitFor(() => expect(rowLabels().slice(0, 2)).toEqual(['METAKOALIN', 'Cement']))
+    await fireEvent.press(await screen.findByText('METAKOALIN', {}, { timeout: 5000 }))
+    await waitFor(() => expect(rowLabels().slice(0, 2)).toEqual(['METAKOALIN', 'Cement']), { timeout: 5000 })
     // The new row opens: enter its SSD, then remove it.
     await fireEvent.changeText(screen.getByLabelText('METAKOALIN SSD design, kilograms per cubic metre'), '20')
     await fireEvent.press(screen.getByRole('button', { name: 'Remove METAKOALIN' }))
-    await waitFor(() => expect(rowLabels()[0]).toBe('Cement'))
+    await waitFor(() => expect(rowLabels()[0]).toBe('Cement'), { timeout: 5000 })
     // Added again, saved with its master name.
     await fireEvent.press(screen.getByRole('button', { name: 'Mineral admixture: not chosen' }))
-    await fireEvent.press(await screen.findByText('FLYASH'))
-    await waitFor(() => expect(rowLabels().slice(0, 2)).toEqual(['Fly ash', 'Cement']))
+    await fireEvent.press(await screen.findByText('FLYASH', {}, { timeout: 5000 }))
+    await waitFor(() => expect(rowLabels().slice(0, 2)).toEqual(['Fly ash', 'Cement']), { timeout: 5000 })
     await fireEvent.changeText(screen.getByLabelText('Fly ash SSD design, kilograms per cubic metre'), '80')
     await fireEvent.press(screen.getByRole('button', { name: 'Save' }))
     await waitFor(() => expect(mockApi).toHaveBeenCalledWith('/trials/t-1/', expect.objectContaining({ method: 'PATCH' })))
@@ -619,5 +620,49 @@ describe('photos and videos per reading time (UAT, 12 Nov 2026)', () => {
     const buttons = alert.mock.calls.at(-1)![2] as { text: string; onPress?: () => void }[]
     await act(async () => { buttons.find((b) => b.text === 'Remove')!.onPress!() })
     await waitFor(() => expect(mockApi).toHaveBeenCalledWith('/trials/t-1/attachments/7/', { method: 'DELETE' }))
+  })
+})
+
+describe('number and name fields take only what fits (UAT, 12 Nov 2026)', () => {
+  const draft = () => makeTrial({ ...STEP1, status: 'draft', code: null, actions: { edit: true, start: false, close: false, edit_cubes: true, delete: false, attach: true } })
+  const typed = async (label: string, text: string) => {
+    const box = await screen.findByLabelText(label)
+    await fireEvent.changeText(box, text)
+    return screen.getByLabelText(label).props.value
+  }
+
+  it('sieve analysis: retained weights and proportions', async () => {
+    serve(draft())
+    await open(1)
+    expect(await typed('Weight retained on 20 mm, kilograms', '-1a2.5kg.7')).toBe('12.57')
+    expect(await typed('20 mm proportion, percent', '35%.255')).toBe('35.25')
+  })
+
+  it('mix design: batch size and dosages', async () => {
+    serve(draft())
+    await open(2)
+    expect(await typed('Batch size, cubic metres', '0.04m3')).toBe('0.043')
+    expect(await typed('Dosage, percent of binder', 'abc0.8%')).toBe('0.8')
+  })
+
+  it('fresh concrete: density and site temperature', async () => {
+    serve(draft())
+    await open(3)
+    expect(await typed('Fresh wet density, kilograms per cubic metre', '24-50.5kg')).toBe('2450.5')
+    expect(await typed('Site temperature, degrees Celsius', '32°C')).toBe('32')
+  })
+
+  it('cube strength: weight and load', async () => {
+    serve(makeTrial())
+    await open(4)
+    expect(await typed('7 days, cube 1 weight in kilograms', '8.4kg')).toBe('8.4')
+    expect(await typed('7 days, cube 1 load in kilonewtons', '7O2+')).toBe('72')
+  })
+
+  it('conclusion: Thermax R&D and Site QC in charge take letters only', async () => {
+    serve(draft())
+    await open(5)
+    expect(await typed('Thermax R&D, name', 'Ravi K. Sharma 123')).toBe('Ravi K. Sharma ')
+    expect(await typed('Site QC in charge, name', "N@eil D'Souza#1")).toBe("Neil D'Souza")
   })
 })

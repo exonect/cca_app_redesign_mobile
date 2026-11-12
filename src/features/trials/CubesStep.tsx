@@ -10,6 +10,7 @@ import { Alert, Pressable, ScrollView, Text, View } from 'react-native'
 import { fieldErrors } from '@/api/client'
 import { deleteCubes, saveCubes } from '@/offline/trialActions'
 import { AGES, cubeAverage, f2, n, STANDARD_AGES, strength, testDue } from '@/shared/calc'
+import { trialNumberFilter } from '@/shared/inputFilters'
 import type { Trial } from '@/shared/types'
 import { Banner, Button, Screen, Small, TextField } from '@/ui/kit'
 import { color, font, radius } from '@/ui/theme'
@@ -282,11 +283,11 @@ function AgeCard({ age, form, dirty, canEdit, target, error, onChange, onTestedO
           <Text style={[{ fontFamily: font.semibold, fontSize: 15, color: color.ink }, cell(44)]}>{i + 1}</Text>
           <View style={cell('flex')}>
             <CellInput accessibilityLabel={`${label}, cube ${i + 1} weight in kilograms`} value={r.weight} editable={canEdit}
-              invalid={badCubeWeight(r.weight)} warn={!!softWarning('cube_weight', r.weight)} onChangeText={(v) => onChange(i, 'weight', v)} />
+              invalid={badCubeWeight(r.weight)} warn={!!softWarning('cube_weight', r.weight)} onChangeText={(v) => onChange(i, 'weight', trialNumberFilter('cube_weight', v))} />
           </View>
           <View style={cell('flex')}>
             <CellInput accessibilityLabel={`${label}, cube ${i + 1} load in kilonewtons`} value={r.load} editable={canEdit}
-              invalid={badCubeLoad(r.load)} warn={!!softWarning('cube_load', r.load)} onChangeText={(v) => onChange(i, 'load', v)} />
+              invalid={badCubeLoad(r.load)} warn={!!softWarning('cube_load', r.load)} onChangeText={(v) => onChange(i, 'load', trialNumberFilter('cube_load', v))} />
           </View>
           <Text testID={`str-${age}-${i}`} style={[{ fontFamily: font.semibold, fontSize: 16, color: color.ink, textAlign: 'right', fontVariant: ['tabular-nums'] }, cell('flex')]}>
             {f2(strength(r.load)) || '–'}
