@@ -25,7 +25,8 @@ const config: ExpoConfig = {
     supportsTablet: true,
     infoPlist: {
       NSCameraUsageDescription: 'CCA uses the camera to photograph cubes, slump tests and site conditions for a trial.',
-      NSPhotoLibraryUsageDescription: 'CCA lets you attach photos from your library to a trial.',
+      NSMicrophoneUsageDescription: 'CCA records sound with videos of slump and flow tests for a trial.',
+      NSPhotoLibraryUsageDescription: 'CCA lets you attach photos and videos from your library to a trial.',
       NSPhotoLibraryAddUsageDescription: 'CCA saves downloaded trial reports to your library when you ask it to.',
       ITSAppUsesNonExemptEncryption: false,
     },
@@ -49,7 +50,11 @@ const config: ExpoConfig = {
     'expo-font',
     ['expo-splash-screen', { image: './assets/splash-icon.png', backgroundColor: '#231F20', imageWidth: 160 }],
     'expo-sharing',
-    ['expo-image-picker', { cameraPermission: 'CCA uses the camera to photograph cubes, slump tests and site conditions for a trial.' }],
+    ['expo-image-picker', {
+      cameraPermission: 'CCA uses the camera to photograph cubes, slump tests and site conditions for a trial.',
+      microphonePermission: 'CCA records sound with videos of slump and flow tests for a trial.',
+      photosPermission: 'CCA lets you attach photos and videos from your library to a trial.',
+    }],
   ],
   experiments: { typedRoutes: true },
   extra: {

@@ -18,6 +18,7 @@ import {
   sccNumber, SLUMP_TOLERANCE, sortSlumpList, type FreshForm, type SccKey,
 } from './forms'
 import { Section, Segmented, StepActions, Verdict, WarnText } from './parts'
+import { ReadingMediaButton } from './ReadingMedia'
 import { useStepForm, useWorkspace } from './workspace'
 
 const SHOWN = ['fresh_readings', 'fresh_density', 'site_temp', 'bleeding', 'setting', 'scc'] as const
@@ -93,7 +94,7 @@ export function FreshStep({ readOnly, banners }: { readOnly: boolean; banners: R
             options={[{ value: 'slump', label: 'Slump' }, { value: 'flow', label: 'Flow' }]} />
         </View>
       ) : undefined}>
-        <Small style={{ paddingHorizontal: 16, paddingBottom: 8 }}>Readings in mm from the Slump Flow list, from the time of mixing. Leave a time blank if it was not measured.</Small>
+        <Small style={{ paddingHorizontal: 16, paddingBottom: 8 }}>Readings in mm from the Slump Flow list, from the time of mixing. Leave a time blank if it was not measured. Use the camera button on a time to add photos or videos of the test.</Small>
         {slumpList.isError ? <Small style={{ paddingHorizontal: 16, paddingBottom: 6 }}>The Slump Flow list could not be loaded. Go back and open the trial again.</Small> : null}
         {READING_MINUTES.map((m) => {
           const hit = m === at
@@ -103,7 +104,7 @@ export function FreshStep({ readOnly, banners }: { readOnly: boolean; banners: R
           const timeLabel = m === '0' ? 'Initial' : `${m} min`
           return (
             <View key={m} style={{
-              flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: 48, paddingHorizontal: 16, paddingVertical: 2,
+              flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 52, paddingHorizontal: 16, paddingVertical: 2,
               borderTopWidth: 1, borderColor: color.divider, backgroundColor: hit ? color.met.bg : color.surface,
               borderLeftWidth: hit ? 3 : 0, borderLeftColor: color.met.solid,
             }}>
@@ -120,7 +121,8 @@ export function FreshStep({ readOnly, banners }: { readOnly: boolean; banners: R
                 </View>
                 <Text style={{ fontFamily: font.regular, fontSize: 13, color: color.muted }}>mm</Text>
               </View>
-              <Text style={{ width: 90, textAlign: 'right', fontFamily: hit && note ? font.bold : font.regular, fontSize: 13, color: hit && note ? (within ? color.met.fg : color.below.fg) : color.muted }}>{note}</Text>
+              <Text style={{ width: 76, textAlign: 'right', fontFamily: hit && note ? font.bold : font.regular, fontSize: 13, color: hit && note ? (within ? color.met.fg : color.below.fg) : color.muted }}>{note}</Text>
+              <ReadingMediaButton reading={m} />
             </View>
           )
         })}
@@ -145,7 +147,7 @@ export function FreshStep({ readOnly, banners }: { readOnly: boolean; banners: R
           {READING_MINUTES.map((m) => {
             const options = sccOptions(sccLists[t.key].data, form.scc[t.key][m])
             return (
-              <View key={m} style={{ flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: 48, paddingHorizontal: 16, paddingVertical: 2, borderTopWidth: 1, borderColor: color.divider }}>
+              <View key={m} style={{ flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 52, paddingHorizontal: 16, paddingVertical: 2, borderTopWidth: 1, borderColor: color.divider }}>
                 <Text style={{ flex: 1, fontFamily: font.semibold, fontSize: 15, color: color.ink }}>{readingLabel(m)}</Text>
                 <View style={{ width: 150 }}>
                   <Picker label={`${t.label} at ${readingLabel(m).toLowerCase()}`} placeholder="–" value={sccValue(options, form.scc[t.key][m])}

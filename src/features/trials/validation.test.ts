@@ -263,7 +263,7 @@ describe('attachments', () => {
   const file = (name: string, size = 1000) => ({ uri: `file:///${name}`, name, type: '', size })
   it('accepts iPhone HEIC and other photo types (T-55)', () => {
     expect(planUploads([file('IMG_1.HEIC'), file('b.heif'), file('c.webp'), file('d.gif')], 0).problems).toEqual([])
-    expect(planUploads([file('x.exe')], 0).problems).toEqual(['x.exe is not a PDF, photo (JPG, PNG, HEIC, WEBP, GIF), XLSX or MP4 file.'])
+    expect(planUploads([file('x.exe')], 0).problems).toEqual(['x.exe is not a PDF, XLSX, photo (JPG, PNG, HEIC, WEBP, GIF) or video (MP4, MOV) file.'])
   })
   it('skips empty files and anything over 30 files on the trial', () => {
     expect(planUploads([file('a.pdf', 0)], 0)).toEqual({ upload: [], problems: ['a.pdf is empty.'] })

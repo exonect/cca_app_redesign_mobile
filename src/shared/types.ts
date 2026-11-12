@@ -142,7 +142,16 @@ export type Trial = TrialListItem & {
   signature_sales: string; signature_site_qc: string; signature_rd: string
   started_at: string | null; closed_at: string | null; results: TrialResults; cementitious_kg: string | null
   cube_sets: { age: string; age_label: string; cubes: { weight: string | null; load: string | null }[]; average: string | null; tested_on: string | null }[]
-  attachments: { id: number; original_name: string; size: number; content_type: string; reading?: ReadingMinute | ''; uploaded_by: string; created_at: string }[]
+  attachments: {
+    id: number; original_name: string; size: number; content_type: string; reading?: ReadingMinute | ''; uploaded_by: string; created_at: string
+    /** Photos and videos are made smaller on the server: the size as uploaded (null for files never processed). */
+    original_size?: number | null
+    kind?: 'image' | 'video' | 'file'
+    /** A thumbnail is at attachments/<id>/thumbnail/. */
+    has_thumbnail?: boolean
+    /** pending: a video being made smaller; failed: kept as uploaded. */
+    processing?: '' | 'pending' | 'failed'
+  }[]
   actions: TrialActions
   /** Open data flags on this trial (detail responses). */
   flags?: FlagBrief[]

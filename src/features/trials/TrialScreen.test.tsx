@@ -25,6 +25,16 @@ jest.mock('@/api/client', () => {
 })
 jest.mock('react-native-view-shot', () => ({ captureRef: jest.fn() }))
 jest.mock('react-native-safe-area-context', () => require('react-native-safe-area-context/jest/mock').default)
+const mockQueueFiles = jest.fn(async (..._a: unknown[]) => [] as string[])
+jest.mock('@/offline/trialActions', () => ({ ...jest.requireActual('@/offline/trialActions'), queueFiles: (...a: unknown[]) => mockQueueFiles(...a) }))
+const mockCamera = jest.fn()
+const mockLibrary = jest.fn()
+jest.mock('expo-image-picker', () => ({
+  requestCameraPermissionsAsync: async () => ({ granted: true, canAskAgain: true }),
+  launchCameraAsync: (...a: unknown[]) => mockCamera(...a),
+  launchImageLibraryAsync: (...a: unknown[]) => mockLibrary(...a),
+  UIImagePickerControllerQualityType: { IFrame1280x720: 7 },
+}))
 let mockRoles: string[] = ['CT']
 jest.mock('@/auth/AuthProvider', () => ({ useAuth: () => ({ hasRole: (...r: string[]) => r.some((x) => mockRoles.includes(x)), user: { id: 1 } }) }))
 
@@ -76,6 +86,7 @@ function serve(trial: Trial, extra: (path: string, opts?: { method?: string; bod
     if (path === '/trials/t-1/' && !opts?.method) return trial
     if (path === '/projects/p-1/') return project
     if (path === '/trials/t-1/close-check/') return { warnings: [], checks: [] }
+    if (path === '/auth/me/') return {}
     if (path === '/lookups/' || path === '/grading-limits/' || path === '/recipes/products/') return []
     throw new Error(`Unexpected ${opts?.method ?? 'GET'} ${path}`)
   })
@@ -553,5 +564,60 @@ describe('mineral admixtures (UAT, 12 Nov 2026)', () => {
     const body = mockApi.mock.calls.find((c) => c[1]?.method === 'PATCH')![1].body
     expect(body.materials.fly_ash).toEqual({ ssd: '80', name: 'FLYASH' })
     expect(body.materials).not.toHaveProperty('mineral:metakoalin')
+  })
+})
+
+describe('photos and videos per reading time (UAT, 12 Nov 2026)', () => {
+  const started = { edit: false, start: false, close: true, edit_cubes: true, delete: false, attach: true }
+  const file = (id: number, reading: string, name = `IMG_${id}.jpg`, over: Record<string, unknown> = {}) => ({
+    id, original_name: name, size: 300_000, content_type: 'image/jpeg', reading, uploaded_by: 'Sneha Rao', created_at: '2026-11-04T06:00:00Z',
+    kind: name.endsWith('.mp4') ? 'video' : 'image', has_thumbnail: true, processing: '', original_size: 4_000_000, ...over,
+  })
+  beforeEach(() => { mockQueueFiles.mockClear(); mockCamera.mockReset(); mockLibrary.mockReset() })
+
+  it('shows a camera button with the count on each reading time and takes a photo for that time', async () => {
+    serve(makeTrial({ actions: started, attachments: [file(1, '30'), file(2, '30', 'slump.mp4', { processing: 'pending' })] as Trial['attachments'] }))
+    mockCamera.mockResolvedValue({ canceled: false, assets: [{ uri: 'file:///p.jpg', fileName: 'p.jpg', mimeType: 'image/jpeg', fileSize: 2_000_000, type: 'image' }] })
+    await open(3)
+    expect(await screen.findByLabelText('30 min photos and videos, 2')).toBeTruthy()
+    await fireEvent.press(screen.getByLabelText('60 min photos and videos, none'))
+    expect(await screen.findByText('Nothing for 60 min yet.')).toBeTruthy()
+    await fireEvent.press(screen.getByRole('button', { name: 'Take photo' }))
+    await waitFor(() => expect(mockQueueFiles).toHaveBeenCalledWith('t-1', [expect.objectContaining({ uri: 'file:///p.jpg', name: 'p.jpg', type: 'image/jpeg' })], '60'))
+    expect(mockCamera).toHaveBeenCalledWith({ mediaTypes: ['images'], quality: 0.7 })
+  })
+
+  it('records videos up to a minute at 720p and refuses a longer one from the library', async () => {
+    serve(makeTrial({ actions: started }))
+    mockCamera.mockResolvedValue({ canceled: true, assets: null })
+    mockLibrary.mockResolvedValue({ canceled: false, assets: [{ uri: 'file:///v.mov', fileName: 'v.mov', mimeType: 'video/quicktime', fileSize: 40_000_000, duration: 95_000, type: 'video' }] })
+    await open(3)
+    await fireEvent.press(await screen.findByLabelText('Initial photos and videos, none'))
+    await fireEvent.press(await screen.findByRole('button', { name: 'Record video, up to 60 s' }))
+    await waitFor(() => expect(mockCamera).toHaveBeenCalledWith({ mediaTypes: ['videos'], videoMaxDuration: 60, videoQuality: 7 }))
+    await fireEvent.press(screen.getByRole('button', { name: 'Choose from library' }))
+    expect(await screen.findByText(/v\.mov.*1 min/)).toBeTruthy()
+    expect(mockQueueFiles).not.toHaveBeenCalled()
+    expect(mockLibrary).toHaveBeenCalledWith(expect.objectContaining({ mediaTypes: ['images', 'videos'], allowsMultipleSelection: true, selectionLimit: 5 }))
+  })
+
+  it('takes no more than five on a reading time', async () => {
+    serve(makeTrial({ actions: started, attachments: [1, 2, 3, 4, 5].map((i) => file(i, '90')) as Trial['attachments'] }))
+    await open(3)
+    await fireEvent.press(await screen.findByLabelText('90 min photos and videos, 5'))
+    expect(await screen.findByText(/90 min has 5 photos or videos, the most a reading time takes/)).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Take photo' })).toBeNull()
+  })
+
+  it('removes a photo on a draft after confirming', async () => {
+    const alert = jest.spyOn(Alert, 'alert').mockClear()
+    const draft = makeTrial({ status: 'draft', code: null, actions: { edit: true, start: false, close: false, edit_cubes: true, delete: false, attach: true }, attachments: [file(7, '0')] as Trial['attachments'] })
+    serve(draft, (path, opts) => (opts?.method === 'DELETE' ? {} : path === '/auth/me/' ? {} : undefined))
+    await open(3)
+    await fireEvent.press(await screen.findByLabelText('Initial photos and videos, 1'))
+    await fireEvent.press(await screen.findByRole('button', { name: 'Remove IMG_7.jpg' }))
+    const buttons = alert.mock.calls.at(-1)![2] as { text: string; onPress?: () => void }[]
+    await act(async () => { buttons.find((b) => b.text === 'Remove')!.onPress!() })
+    await waitFor(() => expect(mockApi).toHaveBeenCalledWith('/trials/t-1/attachments/7/', { method: 'DELETE' }))
   })
 })

@@ -15,14 +15,14 @@ import { kick, outbox, useInFlight, useTrialOps } from '@/offline/outbox'
 import type { Op } from '@/offline/queue'
 import { queueFiles, readyToClose } from '@/offline/trialActions'
 import type { Outcome, Trial } from '@/shared/types'
-import { Banner, Button, Field, OutcomeChip, Picker, Screen, Small, TextField } from '@/ui/kit'
+import { Banner, Button, Field, OutcomeChip, Screen, Small, TextField } from '@/ui/kit'
 import { color, font, radius, TOUCH } from '@/ui/theme'
 
 import { extOf, MIME, photoName, planUploads, type PickedFile } from './attachments'
 import { downloadAndShare } from './download'
 import { date, fileSize, shortDate } from './format'
 import {
-  conclusionForm, conclusionPayload, conclusionProblems, LIMITS, READING_MINUTES, readingLabel, SIGNATORIES, SIGNATORY_MAX, splitWarnings, type ConclusionForm,
+  conclusionForm, conclusionPayload, conclusionProblems, LIMITS, readingLabel, SIGNATORIES, SIGNATORY_MAX, splitWarnings, type ConclusionForm,
 } from './forms'
 import { RadioCard, Section, StepFooter } from './parts'
 import { SignaturePad } from './SignaturePad'
@@ -256,8 +256,6 @@ function Attachments() {
   const [problems, setProblems] = useState<string[]>([])
   const [keeping, setKeeping] = useState(false)
   const [opening, setOpening] = useState<number | null>(null)
-  // Legacy: each photo or video belonged to a reading time of the fresh concrete table.
-  const [reading, setReading] = useState('')
   const canAttach = trial.actions.attach
   const canDelete = trial.actions.edit
   const refresh = () => qc.invalidateQueries({ queryKey: ['trial', trial.id] })
@@ -269,7 +267,7 @@ function Attachments() {
     const { upload: good, problems: skipped } = planUploads(files, trial.attachments.length + waiting.length)
     setKeeping(true)
     try {
-      const failed = await queueFiles(trial.id, good, reading)
+      const failed = await queueFiles(trial.id, good)
       setProblems([...skipped, ...failed])
       const kept = good.length - failed.length
       if (kept) {
@@ -381,7 +379,7 @@ function Attachments() {
               <Pressable accessibilityRole="link" accessibilityLabel={`Open ${a.original_name}`} onPress={() => open(a.id, a.original_name, a.content_type)}
                 disabled={opening === a.id} style={{ flex: 1, minWidth: 0, minHeight: TOUCH, justifyContent: 'center' }}>
                 <Text numberOfLines={1} style={{ fontFamily: font.semibold, fontSize: 15, color: color.link }}>{a.original_name}</Text>
-                <Small>{opening === a.id ? 'Opening…' : `${a.reading ? `${readingLabel(a.reading)} reading, ` : ''}${fileSize(a.size)}, added ${shortDate(a.created_at)} by ${a.uploaded_by}`}</Small>
+                <Small>{opening === a.id ? 'Opening…' : `${a.reading ? `${readingLabel(a.reading)} reading, ` : ''}${fileSize(a.size)}, added ${shortDate(a.created_at)} by ${a.uploaded_by}${a.processing === 'pending' ? '. Being made smaller' : ''}`}</Small>
               </Pressable>
               {canDelete && (
                 <Pressable accessibilityRole="button" accessibilityLabel={`Remove ${a.original_name}`} onPress={() => confirmRemove(a.id, a.original_name)}
@@ -396,19 +394,12 @@ function Attachments() {
           )
         })}
       {canAttach && (
-        <Field label="Reading time" hint="The fresh concrete reading the next photos or files belong to.">
-          <Picker label="Reading time" placeholder="Not tied to a reading" value={reading || null} disabled={keeping}
-            options={[{ value: '', label: 'Not tied to a reading' }, ...READING_MINUTES.map((m) => ({ value: m, label: readingLabel(m) }))]}
-            onChange={(v) => setReading(v ?? '')} />
-        </Field>
-      )}
-      {canAttach && (
         <View style={{ flexDirection: 'row', gap: 10 }}>
           <IconButton label="Take photo" icon="camera" onPress={takePhoto} disabled={keeping} />
           <IconButton label="Choose file" icon="file" onPress={chooseFile} disabled={keeping} />
         </View>
       )}
-      {canAttach ? <Small>PDF, photos (JPG, PNG, HEIC, WEBP, GIF), XLSX or MP4, up to 25 MB each and 30 files per trial. Photos taken offline upload when you are back online.</Small> : null}
+      {canAttach ? <Small>Cube reports and other files: PDF or XLSX up to 25 MB, photos up to 20 MB, videos up to 100 MB and 1 minute, 30 files per trial. Photos and videos of a slump test go on its reading time in the fresh concrete step. The server stores photos and videos smaller. Files added offline upload when you are back online.</Small> : null}
     </Section>
   )
 }
