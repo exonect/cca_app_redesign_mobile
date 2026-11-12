@@ -33,11 +33,14 @@ export function RecipeScreen({ id, forTrial, prefill }: { id: string; forTrial?:
   // edit: change this recipe; version: a new version prefilled from it (a locked recipe cannot be changed).
   const [mode, setMode] = useState<'view' | 'edit' | 'version'>(isNew ? 'edit' : 'view')
   const q = useQuery({ queryKey: ['recipe', id], queryFn: () => api<RecipeWithLock>(`/recipes/${id}/`), enabled: !isNew })
-  // Legacy rights: Admins, Sales Admins (from a trial) and CTs add recipes; only an Admin edits or changes status.
-  const canCreate = hasRole('AD', 'SAD', 'CT')
+  // Who adds recipes (UAT, 12 Nov 2026): an Admin, in Recipe master; a CT only from a trial's mix design
+  // (New formulation, which opens this screen with forTrial). Only an Admin edits or changes status.
+  const canCreate = hasRole('AD') || (hasRole('CT') && !!forTrial)
   const canEdit = hasRole('AD')
 
-  if (isNew && !canCreate) return <Shell title="Recipe"><Body>Only Admins, Sales Admins and CTs can add recipes.</Body></Shell>
+  if (isNew && !canCreate) {
+    return <Shell title="Recipe"><Body>{"An Admin adds recipes in Recipe master. A CT adds one from a trial's mix design, with New formulation."}</Body></Shell>
+  }
   // Refused or gone on the server: never the copy saved on this phone.
   const refused = statusOf(q.error)
   if (!isNew && q.isError && (refused === 403 || refused === 404)) return <RecordUnavailable status={refused} what="Recipe" />
@@ -152,7 +155,7 @@ export const recipeSchemaFor = (isNew: boolean) => z.object({
 export const recipeSchema = recipeSchemaFor(false)
 type Form = z.input<typeof recipeSchema>
 type FormKey = keyof Form
-type Body = Omit<Form, 'location'> & { location: number; components: Record<string, string>; confirm_new_version?: boolean }
+type Body = Omit<Form, 'location'> & { location: number; components: Record<string, string>; confirm_new_version?: boolean; for_trial?: string }
 const BLANK: Form = { family: '', product_name: '', sfdc_no: '', location: '', customer_name: '', project_name: '', status: 'active' }
 
 /** recipe: edit it. recipe null: a new recipe, or with template a new version
@@ -254,7 +257,9 @@ export function RecipeForm({ recipe, template, onDone, forTrial, prefill }: {
     if (!r.success || comp) return
     // A new version was asked for explicitly, so it is confirmed up front.
     const fixed = named ? { sfdc_no: recipe!.sfdc_no, family: recipe!.family } : {}
-    save.mutate({ ...r.data, ...fixed, location: Number(r.data.location), components: compositionOf(rows), ...(template ? { confirm_new_version: true } : {}) })
+    // From a trial's New formulation: the server lets a CT add a recipe only for a trial they work on.
+    const via = isNew && forTrial ? { for_trial: forTrial } : {}
+    save.mutate({ ...r.data, ...fixed, location: Number(r.data.location), components: compositionOf(rows), ...(template ? { confirm_new_version: true } : {}), ...via })
   }
 
   const errorCount = Object.values(errors).filter(Boolean).length + (compError ? 1 : 0)
@@ -284,9 +289,13 @@ export function RecipeForm({ recipe, template, onDone, forTrial, prefill }: {
             <Chips label="Product family" single options={FAMILY_OPTIONS} value={[v.family]} onChange={(x) => x[0] && set('family', x[0])} />
           </Field>
         )}
-        <Field label="Product name" error={errors.product_name} hint="For example Neutrol 585. Optional: without one the recipe is listed by its formulation name.">
-          <TextField accessibilityLabel="Product name" invalid={Boolean(errors.product_name)} maxLength={100} value={v.product_name} onChangeText={(t) => set('product_name', t)} />
-        </Field>
+        {/* Not asked when a recipe is first made (UAT, 12 Nov 2026): an Admin names the product afterwards.
+            A new version keeps its product's name. */}
+        {recipe || template ? (
+          <Field label="Product name" error={errors.product_name} hint="For example Neutrol 585. Optional: without one the recipe is listed by its formulation name.">
+            <TextField accessibilityLabel="Product name" invalid={Boolean(errors.product_name)} maxLength={100} value={v.product_name} onChangeText={(t) => set('product_name', t)} />
+          </Field>
+        ) : null}
         <View style={{ flexDirection: 'row', gap: 12 }}>
           <View style={{ flex: 1 }}>
             <Field label="Version">

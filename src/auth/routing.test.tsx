@@ -265,7 +265,7 @@ const MATRIX: [string, string, Role[]][] = [
   ['/sieve-data/p1', 'SieveData', ALL],
   ['/recipes', 'Recipes', ['AD', 'CT']],
   ['/recipes/5', 'Recipe', ['AD', 'SAD', 'CT']],
-  ['/recipes/new', 'Recipe', ['AD', 'SAD', 'CT']],
+  ['/recipes/new', 'Recipe', ['AD', 'CT']], // a CT only from a trial's New formulation (the screen checks for_trial)
   ['/admin/users', 'Users', ['AD']],
   ['/admin/master-data', 'MasterData', ['AD']],
   ['/sync', 'Sync', ALL],

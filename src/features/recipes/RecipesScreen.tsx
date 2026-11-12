@@ -48,7 +48,8 @@ export function RecipesScreen() {
   const list = usePaged<Recipe>(['recipes', 'infinite', query], '/recipes/', query)
   const { refreshing, onRefresh } = useRefresh(() => list.refetch())
   // Legacy mobile: Admins and CTs add recipes from Recipe master.
-  const canAdd = hasRole('AD', 'CT')
+  // Recipe master adds recipes for Admins only; a CT adds one from a trial's New formulation (UAT, 12 Nov 2026).
+  const canAdd = hasRole('AD')
   const filtered = Boolean(search || family || status || query.created_from || query.created_to)
   const clear = () => { setText(''); setFamily(''); setStatus(''); setFrom(''); setTo('') }
 

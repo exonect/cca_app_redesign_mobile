@@ -17,7 +17,8 @@
  *   Sieve data /sieve-data/[id]        y   y   y   y    visible_projects (record: 404; can_edit)
  *   Recipe master /recipes             y   -   -   y    legacy menus (server: SP sees none)
  *   Recipe /recipes/[id], new          y   y   -   y    RecipeViewSet: SP queryset none (404),
- *                                                       create AD SAD CT, edit and delete AD only
+ *                                                       create AD (CT only from a trial's New
+ *                                                       formulation), edit and delete AD only
  *   Users /admin/users                 y   -   -   -    UserViewSet IsAdmin
  *   Master data /admin/master-data     y   -   -   -    ReadAnyWriteAdmin (editing screen)
  *   Changes to sync /sync              y   y   y   y    this phone's own queue
@@ -49,7 +50,7 @@ export const ACCESS: Record<ScreenKey, readonly Role[]> = {
   'sieve-data': ALL,
   recipes: ['AD', 'CT'],
   recipe: ['AD', 'SAD', 'CT'],
-  'recipe-new': ['AD', 'SAD', 'CT'],
+  'recipe-new': ['AD', 'CT'],
   users: ['AD'],
   'master-data': ['AD'],
   sync: ALL,

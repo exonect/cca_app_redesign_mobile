@@ -73,3 +73,35 @@ it('shows a CT the recipe read only (legacy: CTs had View only)', async () => {
   expect(screen.queryByRole('button', { name: 'Create new version' })).toBeNull()
   expect(screen.queryByRole('button', { name: 'Put on hold' })).toBeNull()
 })
+
+const wrap = (ui: React.ReactElement) => <QueryClientProvider client={client()}>{ui}</QueryClientProvider>
+
+describe('who adds recipes (UAT, 12 Nov 2026)', () => {
+  it('keeps a CT out of a new recipe in Recipe master', async () => {
+    mockRole = 'CT'
+    await render(wrap(<RecipeScreen id="new" />))
+    expect(screen.getByText("An Admin adds recipes in Recipe master. A CT adds one from a trial's mix design, with New formulation.")).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Save recipe' })).toBeNull()
+  })
+
+  it('keeps a Sales Admin out, even from a trial', async () => {
+    mockRole = 'SAD'
+    await render(wrap(<RecipeScreen id="new" forTrial="t-7" />))
+    expect(screen.getByText("An Admin adds recipes in Recipe master. A CT adds one from a trial's mix design, with New formulation.")).toBeTruthy()
+  })
+
+  it('opens the form for a CT from a trial, without a product name', async () => {
+    mockRole = 'CT'
+    await render(wrap(<RecipeScreen id="new" forTrial="t-7" prefill={{ sfdc_no: '123456', customer_name: '', project_name: '' }} />))
+    expect(await screen.findByText('New recipe')).toBeTruthy()
+    expect(screen.queryByLabelText('Product name')).toBeNull()
+  })
+
+  it('shows an Admin the product name on an existing recipe', async () => {
+    recipe.locked = false
+    await render(wrap(<RecipeScreen id="9" />))
+    await fireEvent.press(await screen.findByRole('button', { name: 'Edit recipe' }))
+    expect(screen.getByLabelText('Product name').props.value).toBe('Neutrol 585')
+    recipe.locked = true
+  })
+})
