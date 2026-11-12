@@ -28,7 +28,7 @@ import { ConclusionStep } from './ConclusionStep'
 import { CubesStep } from './CubesStep'
 import { downloadAndShare } from './download'
 import { downloadTrialExcel } from './excel'
-import { localCompleteness, parseStep, STEPS, stepDone, stepOfField, type StepNo } from './forms'
+import { localCompleteness, parseStep, sieveGate, STEPS, stepDone, stepOfField, type StepNo } from './forms'
 import { FreshStep } from './FreshStep'
 import { MixStep } from './MixStep'
 import { SieveStep } from './SieveStep'
@@ -43,7 +43,7 @@ function leaveTo(projectId?: string) {
 }
 
 export function TrialScreen() {
-  const params = useLocalSearchParams<{ id: string; step?: string }>()
+  const params = useLocalSearchParams<{ id: string; step?: string; why?: string }>()
   const id = String(params.id ?? '')
   const qc = useQueryClient()
   // Changes on this phone that have not synced; a trial made offline exists only here until it syncs.
@@ -67,7 +67,7 @@ export function TrialScreen() {
     return <Screen header={<Header title="Trial" back={{ label: 'back', onPress: () => leaveTo() }} />}><Loading label="Loading trial" /></Screen>
   }
   if (q.isError && !madeHere) return <TrialError error={q.error} onRetry={() => q.refetch()} />
-  return <Workspace trial={view} project={project.data} projectError={project.isError} step={parseStep(params.step)} synced={ops.length === 0} />
+  return <Workspace trial={view} project={project.data} projectError={project.isError} step={parseStep(params.step)} why={params.why} synced={ops.length === 0} />
 }
 
 function TrialError({ error, onRetry }: { error: unknown; onRetry: () => void }) {
@@ -88,8 +88,8 @@ export function stillNeeded(trial: Trial, synced: boolean): FieldNote[] {
   return synced && trial.completeness ? trial.completeness : localCompleteness(trial)
 }
 
-function Workspace({ trial, project, projectError, step, synced }: {
-  trial: Trial; project: Project | undefined; projectError: boolean; step: StepNo; synced: boolean
+function Workspace({ trial, project, projectError, step, why, synced }: {
+  trial: Trial; project: Project | undefined; projectError: boolean; step: StepNo; why?: string; synced: boolean
 }) {
   const qc = useQueryClient()
   const registry = useSaverRegistry()
@@ -118,23 +118,37 @@ function Workspace({ trial, project, projectError, step, synced }: {
 
   const switchTo = useCallback((n: StepNo) => {
     setNotice(null)
-    router.setParams({ step: String(n) })
+    router.setParams({ step: String(n), why: '' })
   }, [])
+
+  // Step 1 rule (UAT, 12 Nov 2026; the old app's "Next"): while a trial is being filled in, no other step
+  // opens until 20 mm, 10 mm and one sand are entered and the proportions total 100. Checked on the trial
+  // as this phone has it now (saved, or kept for sync when offline), so it works without a signal too.
+  const held = useCallback((n: StepNo) => {
+    if (n <= 1 || !trial.actions.edit) return false
+    const gaps = sieveGate(currentView(qc, trial.id) ?? trial)
+    if (!gaps.length) return false
+    if (step !== 1) router.setParams({ step: '1' })
+    notify({ tone: 'error', text: gaps.map((g) => g.message).join(' ') })
+    return true
+  }, [qc, trial, step, notify])
+  const go = useCallback((n: StepNo) => { if (!held(n)) switchTo(n) }, [held, switchTo])
 
   const goTo = useCallback((n: StepNo, force = false) => {
     if (n === step) return
-    if (force || !registry.isDirty()) { switchTo(n); return }
+    if (force || !registry.isDirty()) { go(n); return }
     Alert.alert('Save your changes?', `${STEPS[step - 1].label} has changes that are not saved yet.`, [
       { text: 'Stay here', style: 'cancel' },
-      { text: 'Leave without saving', style: 'destructive', onPress: () => switchTo(n) },
-      { text: 'Save and continue', onPress: async () => { if (await saveAll()) switchTo(n) } },
+      { text: 'Leave without saving', style: 'destructive', onPress: () => go(n) },
+      { text: 'Save and continue', onPress: async () => { if (await saveAll()) go(n) } },
     ])
-  }, [step, registry, switchTo, saveAll])
+  }, [step, registry, go, saveAll])
 
   const next = useCallback(async () => {
     if (registry.isDirty() && !(await saveAll())) return
-    if (step < 5) switchTo((step + 1) as StepNo)
-  }, [registry, saveAll, step, switchTo])
+    if (step < 5) go((step + 1) as StepNo)
+  }, [registry, saveAll, step, go])
+
 
   const [starting, setStarting] = useState(false)
   const [missing, setMissing] = useState<FieldNote[] | null>(null)
@@ -263,10 +277,15 @@ function Workspace({ trial, project, projectError, step, synced }: {
     notice, notify,
   }), [trial, project, step, header, accept, registry, saving, saveAll, goTo, next, startTrial, starting, open, castError, notice, notify])
 
+  // Opened on a later step (a link, a notification) before step 1 is complete: show step 1 and why.
+  const gaps = trial.actions.edit ? sieveGate(trial) : []
+  useEffect(() => { if (step > 1 && gaps.length) router.setParams({ step: '1', why: 'sieves' }) }, [step, gaps.length])
+
   const readOnly = !trial.actions.edit
   const banners = (
     <>
       <TrialSyncNote trialId={trial.id} />
+      {step === 1 && why === 'sieves' && gaps.length > 0 && <Banner tone="error">{gaps.map((g) => g.message).join(' ')}</Banner>}
       <FlagBanner flags={(trial as TrialWithFlags).flags} refresh={[['trial', trial.id], ['trials']]} what="trial" />
       {trial.status === 'closed' && (
         <Banner tone="info">This trial is closed and read only.{trial.actions.edit_cubes ? ' You can still add cube results in Cube strength.' : ''}</Banner>

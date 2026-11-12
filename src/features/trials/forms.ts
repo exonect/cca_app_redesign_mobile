@@ -5,7 +5,7 @@
  * Same rules as the web app (src/features/trials/forms.ts there).
  */
 import { fieldErrors, fieldErrorsByPath } from '@/api/errors'
-import { AGES, AGGREGATES, MATERIAL_LABEL, MATERIALS, SIEVE_LABEL, SIEVE_SETS } from '@/shared/calc'
+import { AGES, AGGREGATES, analyse, MATERIAL_LABEL, MATERIALS, SIEVE_LABEL, SIEVE_SETS } from '@/shared/calc'
 import type { FieldNote, Project, Trial } from '@/shared/types'
 
 import { CAST_ERRORS, castIso, castParts, dayIso, isFutureDay, istToday } from './castAt'
@@ -205,29 +205,71 @@ export function decimalProblem(v: string, rule: { label: string; min?: number; m
 export type SieveEntry = { sieve: string; retained: string }
 export type SieveForm = { sieves: Record<SieveMaterial, SieveEntry[]>; proportions: Record<SieveMaterial, string> }
 
+/** What an empty sieve or proportion shows (UAT, 12 Nov 2026): 0.00, not blank. */
+export const ZERO = '0.00'
+/** Sum of the weights above 0 (blank and 0 count as nothing). */
+export const retainedTotal = (rows: { retained: unknown }[] | undefined) => sieveTotal(rows)
+
+/**
+ * Live figures from the first weight entered (UAT, 12 Nov 2026): a blank counts as 0, and every column
+ * follows each change. A material whose weights are all 0 shows no figures yet.
+ */
+export function liveAnalyse(rows: SieveEntry[]): ReturnType<typeof analyse> {
+  const filled = analyse(rows.map((r) => ({ sieve: r.sieve, retained: r.retained.trim() === '' ? '0' : r.retained })))
+  if (retainedTotal(rows) > 0 || !filled.complete) return filled
+  return { ...filled, rows: filled.rows.map((r) => ({ ...r, cum: null, cumPct: null, passing: null })), complete: false, fm: null }
+}
+
 export function sieveForm(t: Pick<Trial, 'sieves' | 'proportions'>): SieveForm {
   const sieves = {} as SieveForm['sieves']
   const proportions = {} as SieveForm['proportions']
   for (const m of SIEVE_MATERIALS) {
     const rows = t.sieves?.[m] ?? []
     sieves[m] = rows.length
-      ? rows.map((r) => ({ sieve: String(r.sieve), retained: str(r.retained) }))
-      : SIEVE_SETS[m].map((sieve) => ({ sieve, retained: '' }))
-    proportions[m] = str(t.proportions?.[m])
+      ? rows.map((r) => ({ sieve: String(r.sieve), retained: str(r.retained) || ZERO }))
+      : SIEVE_SETS[m].map((sieve) => ({ sieve, retained: ZERO }))
+    proportions[m] = str(t.proportions?.[m]) || ZERO
   }
   return { sieves, proportions }
 }
 
+/**
+ * A material counts once any of its weights is above 0: it is sent with blanks as 0; one left at 0
+ * throughout is sent as not analysed. Proportions are sent once any is above 0 (blanks as 0); the
+ * server then checks they total 100.
+ */
 export function sievePayload(f: SieveForm) {
-  const anyProportion = SIEVE_MATERIALS.some((m) => !blank(f.proportions[m]))
+  const anyProportion = SIEVE_MATERIALS.some((m) => positive(f.proportions[m]))
   return {
     sieves: Object.fromEntries(SIEVE_MATERIALS.map((m) => {
       const rows = f.sieves[m]
-      return [m, rows.some((r) => !blank(r.retained)) ? rows.map((r) => ({ sieve: r.sieve, retained: orNull(r.retained) })) : []]
+      return [m, retainedTotal(rows) > 0 ? rows.map((r) => ({ sieve: r.sieve, retained: orNull(r.retained) ?? '0' })) : []]
     })),
-    // Blank proportions count as 0 once any is entered; the server checks the 100% total.
     proportions: anyProportion ? Object.fromEntries(SIEVE_MATERIALS.map((m) => [m, orNull(f.proportions[m]) ?? '0'])) : {},
   }
+}
+
+/**
+ * Before leaving step 1 (UAT, 12 Nov 2026; the old app's "Next"): 20 mm, 10 mm and at least one sand with
+ * a total above 0, and the all in grading proportions totalling 100. Same rule and words as the web app
+ * and the server (cca/trials/plausibility.py sieve_gap, proportion_gap), which also checks it on Start.
+ */
+export function sieveGate(t: Pick<Trial, 'sieves' | 'proportions'>): { field: 'sieves' | 'proportions'; message: string }[] {
+  const out: { field: 'sieves' | 'proportions'; message: string }[] = []
+  const total = (m: SieveMaterial) => retainedTotal(t.sieves?.[m])
+  const coarse = (['20mm', '10mm'] as const).filter((m) => total(m) <= 0).map((m) => SIEVE_MATERIAL_LABEL[m])
+  const sand = total('river_sand') <= 0 && total('crushed_sand') <= 0
+  if (coarse.length || sand) {
+    out.push({
+      field: 'sieves',
+      message: !coarse.length ? 'Fill in river sand or crushed sand to move ahead: at least one needs a total above 0.00 kg.'
+        : sand ? `Fill in ${coarse.join(', ')} and river sand or crushed sand to move ahead: each needs a total above 0.00 kg.`
+          : `Fill in ${coarse.join(' and ')} to move ahead: ${coarse.length > 1 ? 'each needs a total' : 'its total must be'} above 0.00 kg.`,
+    })
+  }
+  const props = decimalTotal(Object.values(t.proportions ?? {}).map((v) => String(v ?? '')).filter((v) => v.trim() !== ''))
+  if (props !== '100.00') out.push({ field: 'proportions', message: `All in grading proportions must total 100%. They total ${props}%.` })
+  return out
 }
 
 /** Client checks that block saving step 1, as on the server: retained
@@ -250,7 +292,7 @@ export function sieveProblems(f: SieveForm): Record<string, string> {
     out.proportions = rangeProblem(f.proportions[p], LIMITS.percent) === 'number'
       ? `Enter the ${SIEVE_MATERIAL_LABEL[p]} proportion as a number.`
       : `Enter the ${SIEVE_MATERIAL_LABEL[p]} proportion from 0 to 100.`
-  } else if (SIEVE_MATERIALS.some((m) => !blank(f.proportions[m]))) {
+  } else if (SIEVE_MATERIALS.some((m) => positive(f.proportions[m]))) {
     const total = proportionTotal(f)
     if (total !== '100.00') out.proportions = `Proportions must total 100%. They total ${total}%.`
   }
@@ -634,12 +676,8 @@ const SCC_NAME: Record<SccKey, string> = { v_funnel: 'V funnel', t500: 'T500', l
 export function localCompleteness(t: Trial): FieldNote[] {
   const out: FieldNote[] = []
   const add = (field: string, message: string) => out.push({ field, message })
-  const sieves = (t.sieves ?? {}) as Record<string, unknown>
-  const empty = ([['10mm', '10 mm'], ['20mm', '20 mm']] as const).filter(([k]) => sieveTotal(sieves[k]) <= 0).map(([, l]) => l as string)
-  if (sieveTotal(sieves.river_sand) <= 0 && sieveTotal(sieves.crushed_sand) <= 0) empty.push('river sand or crushed sand')
-  if (empty.length) add('sieves', `Sieve analysis: the total for ${empty.join(' and ')} must be greater than 0.`)
-  const props = Object.values(t.proportions ?? {}).map((v) => String(v ?? ''))
-  if (decimalTotal(props) !== '100.00') add('proportions', 'All in grading proportions must total 100%.')
+  // Step 1, the same words the server and the step 1 gate use.
+  for (const g of sieveGate(t)) add(g.field, g.message)
 
   if (!t.cast_at) add('cast_at', 'Trial date and time is required.')
   if (num0(t.batch_size) === null) add('batch_size', 'Batch size is required.')

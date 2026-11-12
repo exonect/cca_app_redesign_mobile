@@ -43,6 +43,16 @@ const project = {
   cementitious_contents: [420], sales_person: { id: 5, name: 'Amit Kulkarni' },
 } as unknown as Project
 
+/** A step 1 that lets the other steps open: 20 mm, 10 mm and crushed sand weighed, proportions 100. */
+const STEP1 = {
+  sieves: {
+    '20mm': [{ sieve: '20', retained: '1.2' }, { sieve: '10', retained: '3.1' }, { sieve: 'pan', retained: '0.1' }],
+    '10mm': [{ sieve: '10', retained: '1.0' }, { sieve: '4.75', retained: '3.5' }, { sieve: 'pan', retained: '0.5' }],
+    crushed_sand: [{ sieve: '2.36', retained: '0.2' }, { sieve: 'pan', retained: '0.75' }],
+  },
+  proportions: { '20mm': '35', '10mm': '25', river_sand: '0', crushed_sand: '40' },
+} as unknown as Pick<Trial, 'sieves' | 'proportions'>
+
 function makeTrial(over: Partial<Trial> = {}): Trial {
   return {
     id: 't-1', code: 'WEST202611471902-03', project: 'p-1', project_name: 'Palava Phase 4 towers', customer_name: 'Konkan Ready Mix',
@@ -188,7 +198,7 @@ describe('fresh concrete', () => {
 describe('draft trial', () => {
   it('shows the server error when starting without a cast date and moves to mix design', async () => {
     const { ApiError } = jest.requireMock('@/api/client')
-    const draft = makeTrial({ status: 'draft', code: null, cast_at: null, actions: { edit: true, start: true, close: false, edit_cubes: true, delete: true, attach: true } })
+    const draft = makeTrial({ ...STEP1, status: 'draft', code: null, cast_at: null, actions: { edit: true, start: true, close: false, edit_cubes: true, delete: true, attach: true } })
     serve(draft, (path) => {
       if (path === '/trials/t-1/start/') throw new ApiError(400, 'validation_error', 'Check the fields.', { cast_at: ['Enter the trial date and time before starting. Cube test dates count from it.'] })
       return undefined
@@ -196,13 +206,13 @@ describe('draft trial', () => {
     await open(1)
     expect(await screen.findByText('Draft trial')).toBeTruthy()
     await fireEvent.press(screen.getByRole('button', { name: 'Start trial' }))
-    await waitFor(() => expect(mockSetParams).toHaveBeenCalledWith({ step: '2' }))
+    await waitFor(() => expect(mockSetParams).toHaveBeenCalledWith({ step: '2', why: '' }))
     expect(await screen.findByText('Enter the trial date and time before starting. Cube test dates count from it.')).toBeTruthy()
   })
 
   it('lists everything the server says is missing at Start, each linked to its step (legacy Create Trial rules)', async () => {
     const { ApiError } = jest.requireMock('@/api/client')
-    const draft = makeTrial({ status: 'draft', code: null, actions: { edit: true, start: true, close: false, edit_cubes: true, delete: false, attach: true } })
+    const draft = makeTrial({ ...STEP1, status: 'draft', code: null, actions: { edit: true, start: true, close: false, edit_cubes: true, delete: false, attach: true } })
     serve(draft, (path) => {
       if (path === '/trials/t-1/start/') {
         throw new ApiError(400, 'validation_error', 'Check the fields.', {
@@ -215,7 +225,7 @@ describe('draft trial', () => {
     await fireEvent.press(await screen.findByRole('button', { name: 'Start trial' }))
     expect(await screen.findByText('The trial cannot start yet')).toBeTruthy()
     await fireEvent.press(screen.getByRole('link', { name: 'Fresh concrete: Site temperature is required.' }))
-    expect(mockSetParams).toHaveBeenCalledWith({ step: '3' })
+    expect(mockSetParams).toHaveBeenCalledWith({ step: '3', why: '' })
     expect(screen.getByRole('link', { name: 'Mix design: Cement brand is required.' })).toBeTruthy()
     expect(screen.getByRole('link', { name: 'Conclusion: For Thermax R&D is required.' })).toBeTruthy()
   })
@@ -458,5 +468,54 @@ describe('server errors on inputs (audit round 2)', () => {
     serve(makeTrial({ status: 'draft', code: null, actions: { ...draftActions, start: false } }))
     await open(3)
     expect((await screen.findByLabelText('Fresh wet density, kilograms per cubic metre')).props.keyboardType).toBe('decimal-pad')
+  })
+})
+
+
+describe('step 1 rules (UAT, 12 Nov 2026)', () => {
+  const draft = (over: Partial<Trial> = {}) => makeTrial({
+    status: 'draft', code: null, actions: { edit: true, start: true, close: false, edit_cubes: true, delete: false, attach: true }, ...over,
+  })
+  const coarse = (w: string) => ['20', '10', '4.75', '2.36', '1.18', '0.6', '0.3', '0.15', 'pan'].map((sieve, i) => ({ sieve, retained: i === 1 ? w : '0' }))
+
+  it('shows 0.00 in every weight and proportion, and live figures from the first weight', async () => {
+    serve(draft())
+    await open(1)
+    const pan = await screen.findByLabelText('Weight retained on Pan, kilograms')
+    expect(pan.props.value).toBe('0.00')
+    expect(screen.getByLabelText('Crushed sand proportion, percent').props.value).toBe('0.00')
+    await fireEvent.changeText(screen.getByLabelText('Weight retained on 20 mm, kilograms'), '10')
+    await fireEvent.changeText(screen.getByLabelText('Weight retained on 10 mm, kilograms'), '30')
+    expect(screen.getAllByText('75.00').length).toBeGreaterThan(0) // passing on 20 mm, before any other weight is in
+  })
+
+  it('holds Next until 20 mm, 10 mm, a sand and 100% proportions are in, saying what is missing', async () => {
+    serve(draft({ sieves: { '20mm': coarse('5'), '10mm': coarse('4') } as unknown as Trial['sieves'], proportions: {} }))
+    await open(1)
+    mockSetParams.mockClear()
+    await fireEvent.press(await screen.findByLabelText(/^Step 2, Mix design/))
+    expect(await screen.findByText(
+      'Fill in river sand or crushed sand to move ahead: at least one needs a total above 0.00 kg. All in grading proportions must total 100%. They total 0.00%.')).toBeTruthy()
+    expect(mockSetParams).not.toHaveBeenCalledWith(expect.objectContaining({ step: '2' }))
+  })
+
+  it('sends a later step back to step 1 while step 1 is incomplete', async () => {
+    serve(draft())
+    await open(3)
+    await waitFor(() => expect(mockSetParams).toHaveBeenCalledWith({ step: '1', why: 'sieves' }))
+  })
+
+  it('moves ahead once step 1 is complete', async () => {
+    serve(draft(STEP1))
+    await open(1)
+    mockSetParams.mockClear()
+    await fireEvent.press(await screen.findByLabelText(/^Step 2, Mix design/))
+    await waitFor(() => expect(mockSetParams).toHaveBeenCalledWith({ step: '2', why: '' }))
+  })
+
+  it('does not hold a read only trial', async () => {
+    serve(makeTrial({ status: 'closed', actions: { edit: false, start: false, close: false, edit_cubes: false, delete: false, attach: false } }))
+    await open(3)
+    expect(mockSetParams).not.toHaveBeenCalledWith({ step: '1', why: 'sieves' })
   })
 })

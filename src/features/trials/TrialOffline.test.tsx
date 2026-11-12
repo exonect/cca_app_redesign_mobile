@@ -152,7 +152,7 @@ it('stops an offline Start that the server would refuse and lists what is missin
   await fireEvent.press(await screen.findByRole('button', { name: 'Start trial' }))
   expect(await screen.findByText('The trial cannot start yet')).toBeTruthy()
   expect(screen.getByRole('link', { name: 'Fresh concrete: Site temperature is required.' })).toBeTruthy()
-  expect(screen.getByRole('link', { name: 'Sieve analysis: All in grading proportions must total 100%.' })).toBeTruthy()
+  expect(screen.getByRole('link', { name: /^Sieve analysis: All in grading proportions must total 100%\. They total [\d.]+%\.$/ })).toBeTruthy()
   expect(outbox.getSnapshot()).toEqual([])
   expect(mockApi).not.toHaveBeenCalled()
 })

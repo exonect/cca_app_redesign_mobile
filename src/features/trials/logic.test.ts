@@ -39,13 +39,13 @@ describe('trial date and time in IST', () => {
 })
 
 describe('step payloads', () => {
-  it('sends only sieve fields, blank proportions as 0 once one is entered', () => {
+  it('sends only sieve fields, blanks as 0 in a weighed material, blank proportions as 0 once one is above 0', () => {
     const f = {
       sieves: { '20mm': [{ sieve: '20', retained: '10' }, { sieve: 'pan', retained: '' }], '10mm': [], river_sand: [{ sieve: '4.75', retained: '' }], crushed_sand: [] },
       proportions: { '20mm': '30', '10mm': '', river_sand: '', crushed_sand: '70' },
     } as unknown as SieveForm
     expect(sievePayload(f)).toEqual({
-      sieves: { '20mm': [{ sieve: '20', retained: '10' }, { sieve: 'pan', retained: null }], '10mm': [], river_sand: [], crushed_sand: [] },
+      sieves: { '20mm': [{ sieve: '20', retained: '10' }, { sieve: 'pan', retained: '0' }], '10mm': [], river_sand: [], crushed_sand: [] },
       proportions: { '20mm': '30', '10mm': '0', river_sand: '0', crushed_sand: '70' },
     })
   })

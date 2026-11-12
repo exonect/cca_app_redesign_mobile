@@ -6,14 +6,14 @@ import { useState, type Dispatch, type ReactNode, type SetStateAction } from 're
 import { Text, View } from 'react-native'
 
 import { gradingLimitsQuery } from '@/api/hooks'
-import { analyse, combine, f2, GRADING_SIEVES, gradingAverage, passingMap, SIEVE_LABEL } from '@/shared/calc'
+import { analyse, combine, f2, GRADING_SIEVES, gradingAverage, n as toNumber, passingMap, SIEVE_LABEL } from '@/shared/calc'
 import type { Trial } from '@/shared/types'
 import { Banner, Screen, Small } from '@/ui/kit'
 import { color, font, radius } from '@/ui/theme'
 
 import { GradingChart } from './charts'
 import { num } from './format'
-import { LIMITS, outOfRange, proportionTotal, SIEVE_MATERIAL_LABEL, SIEVE_MATERIAL_SHORT, SIEVE_MATERIALS, sieveForm, sievePayload, sieveProblems, type SieveForm, type SieveMaterial } from './forms'
+import { liveAnalyse, LIMITS, outOfRange, proportionTotal, ZERO, SIEVE_MATERIAL_LABEL, SIEVE_MATERIAL_SHORT, SIEVE_MATERIALS, sieveForm, sievePayload, sieveProblems, type SieveForm, type SieveMaterial } from './forms'
 import { CellInput, cell, Section, Segmented, SourceNote, StepActions, TableHead, Verdict } from './parts'
 import { useStepForm, useWorkspace } from './workspace'
 
@@ -61,12 +61,16 @@ type SieveResults = Pick<Trial['results'], 'sieves' | 'grading' | 'errors'>
 export function SieveEditor({ form, setForm, errors, readOnly, results }: {
   form: SieveForm; setForm: Dispatch<SetStateAction<SieveForm>>; errors: Record<string, string>; readOnly: boolean; results: SieveResults | null
 }) {
-  const [material, setMaterial] = useState<SieveMaterial>(() => SIEVE_MATERIALS.find((m) => !results?.sieves?.[m]?.complete) ?? '20mm')
+  // Open on the first material step 1 still needs: 20 mm, 10 mm, then a sand (only one sand is needed).
+  const [material, setMaterial] = useState<SieveMaterial>(() => {
+    const done = (m: SieveMaterial) => !!results?.sieves?.[m]?.complete
+    return (['20mm', '10mm'] as const).find((m) => !done(m)) ?? (done('river_sand') || done('crushed_sand') ? '20mm' : 'river_sand')
+  })
   const limits = useGradingLimits()
 
   // Live preview while typing; once saved (nothing pending) show what the server calculated.
   const fromServer = !!results?.sieves
-  const live = Object.fromEntries(SIEVE_MATERIALS.map((m) => [m, analyse(form.sieves[m])])) as Record<SieveMaterial, Analysis>
+  const live = Object.fromEntries(SIEVE_MATERIALS.map((m) => [m, liveAnalyse(form.sieves[m])])) as Record<SieveMaterial, Analysis>
   const analyses = fromServer
     ? Object.fromEntries(SIEVE_MATERIALS.map((m) => [m, serverAnalysis(results.sieves[m]) ?? live[m]])) as Record<SieveMaterial, Analysis>
     : live
@@ -74,7 +78,7 @@ export function SieveEditor({ form, setForm, errors, readOnly, results }: {
   // Same exact 2 decimal total as the server check (blank counts as 0).
   const totalText = proportionTotal(form)
   const total = Number(totalText)
-  const anyProportion = SIEVE_MATERIALS.some((m) => form.proportions[m].trim() !== '')
+  const anyProportion = SIEVE_MATERIALS.some((m) => (toNumber(form.proportions[m]) ?? 0) > 0)
   const combined = fromServer && (results.grading?.length ?? 0) > 0
     ? { points: results.grading.map((g) => ({ sieve: g.sieve, combined: Number(g.combined), within: g.within })), error: null }
     : anyProportion ? combine(form.proportions, passing, limits.data) : { points: [], error: null }
@@ -105,7 +109,8 @@ export function SieveEditor({ form, setForm, errors, readOnly, results }: {
               <Text style={[{ fontFamily: font.medium, fontSize: 15, color: color.ink }, cell(76)]}>{SIEVE_LABEL[row.sieve]}</Text>
               <View style={cell('flex')}>
                 <CellInput accessibilityLabel={`Weight retained on ${SIEVE_LABEL[row.sieve]}, kilograms`} value={row.retained} editable={!readOnly}
-                  invalid={invalid} onChangeText={(v) => setRetained(i, v)} />
+                  invalid={invalid} onChangeText={(v) => setRetained(i, v)} selectTextOnFocus
+                  onBlur={() => { if (row.retained.trim() === '') setRetained(i, ZERO) }} />
               </View>
               <Text testID={`pass-${row.sieve}`} style={[{ fontFamily: font.semibold, fontSize: 16, color: color.ink, textAlign: 'right', fontVariant: ['tabular-nums'] }, cell('flex')]}>
                 {f2(out?.passing) || '–'}
@@ -118,7 +123,7 @@ export function SieveEditor({ form, setForm, errors, readOnly, results }: {
             Total <Text style={{ fontFamily: font.semibold, color: color.ink }}>{num(a.total)} kg</Text>
           </Text>
           <Text accessibilityLiveRegion="polite" style={{ fontFamily: font.semibold, fontSize: 15, color: a.fm !== null ? color.ink : color.muted, flexShrink: 1, textAlign: 'right' }}>
-            {a.fm !== null ? `FM ${f2(a.fm)}` : a.complete ? 'Complete' : 'Enter every sieve, 0 if nothing was retained'}
+            {a.fm !== null ? `FM ${f2(a.fm)}` : a.complete ? 'Complete' : 'Enter the weight retained on each sieve'}
           </Text>
         </View>
         <View style={{ paddingTop: 8 }}><SourceNote fromServer={fromServer} /></View>
@@ -131,7 +136,8 @@ export function SieveEditor({ form, setForm, errors, readOnly, results }: {
             <View key={m} style={{ width: '47%', flexGrow: 1, gap: 4 }}>
               <Small>{SIEVE_MATERIAL_LABEL[m]}, %</Small>
               <CellInput accessibilityLabel={`${SIEVE_MATERIAL_LABEL[m]} proportion, percent`} value={form.proportions[m]} editable={!readOnly}
-                invalid={outOfRange(form.proportions[m], LIMITS.percent) || !!errors[`proportions.${m}`]} onChangeText={(v) => setProportion(m, v)} />
+                invalid={outOfRange(form.proportions[m], LIMITS.percent) || !!errors[`proportions.${m}`]} onChangeText={(v) => setProportion(m, v)} selectTextOnFocus
+                onBlur={() => { if (form.proportions[m].trim() === '') setProportion(m, ZERO) }} />
             </View>
           ))}
         </View>
