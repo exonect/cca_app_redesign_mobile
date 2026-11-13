@@ -1,33 +1,31 @@
 /** Step 5, conclusion: requirement checks, Met / Below radio cards, remarks,
- * signatories with a signature pad each, attachments (take photo, choose
- * file, remove), then Close trial with the confirm_close dialog. */
+ * signatories with a signature pad each, then Close trial with the confirm_close dialog.
+ * Photos and videos are added per reading time in Fresh concrete (UAT, 13 Nov 2026). */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import * as DocumentPicker from 'expo-document-picker'
-import * as ImagePicker from 'expo-image-picker'
 import { useRef, useState, type ReactNode } from 'react'
-import { ActivityIndicator, Alert, Linking, Pressable, ScrollView, Text, View } from 'react-native'
-import Svg, { Circle, Path, Polyline, Rect } from 'react-native-svg'
+import { ActivityIndicator, Alert, Pressable, ScrollView, Text, View } from 'react-native'
+import Svg, { Circle, Path, Polyline } from 'react-native-svg'
 
 import { api, ApiError, fieldErrors } from '@/api/client'
 import { errorMessage } from '@/api/errors'
 import { useOnline } from '@/offline/connectivity'
 import { kick, outbox, useInFlight, useTrialOps } from '@/offline/outbox'
 import type { Op } from '@/offline/queue'
-import { queueFiles, readyToClose } from '@/offline/trialActions'
+import { readyToClose } from '@/offline/trialActions'
 import { nameFilter } from '@/shared/inputFilters'
 import type { Outcome, Trial } from '@/shared/types'
 import { Banner, Button, Field, OutcomeChip, Screen, Small, TextField } from '@/ui/kit'
 import { color, font, radius, TOUCH } from '@/ui/theme'
 
-import { extOf, MIME, photoName, planUploads, type PickedFile } from './attachments'
+import { extOf, MIME } from './attachments'
 import { downloadAndShare } from './download'
 import { date, fileSize, shortDate } from './format'
 import {
-  conclusionForm, conclusionPayload, conclusionProblems, LIMITS, readingLabel, SIGNATORIES, SIGNATORY_MAX, splitWarnings, type ConclusionForm,
+  conclusionForm, conclusionPayload, conclusionProblems, LIMITS, SIGNATORIES, SIGNATORY_MAX, splitWarnings, type ConclusionForm,
 } from './forms'
 import { RadioCard, Section, StepFooter } from './parts'
 import { SignaturePad } from './SignaturePad'
-import { queuedNote, savedNotice, useReloadTrial, useStepForm, useWorkspace } from './workspace'
+import { savedNotice, useReloadTrial, useStepForm, useWorkspace } from './workspace'
 
 const REMARKS_MAX = LIMITS.remarks
 const SHOWN = ['remarks', ...SIGNATORIES.flatMap((s) => [s.name, s.sign])]
@@ -227,7 +225,7 @@ export function ConclusionStep({ readOnly, banners }: { readOnly: boolean; banne
         ))}
       </Section>
 
-      <Attachments />
+      <OtherFiles />
       </ScrollView>
     </Screen>
   )
@@ -246,39 +244,23 @@ function CheckIcon({ status }: { status: 'met' | 'not_met' | 'pending' }) {
   )
 }
 
-function Attachments() {
+/**
+ * Files without a reading time: added before 13 Nov 2026 (UAT), or still waiting on this phone from an
+ * older version of the app. New photos and videos go under a reading time in Fresh concrete only
+ * (legacy), so this shows only when there are such files: open, remove on a draft, or discard and retry.
+ */
+function OtherFiles() {
   const { trial, notify } = useWorkspace()
   const qc = useQueryClient()
   const reload = useReloadTrial(trial.id)
   const online = useOnline()
   const sending = useInFlight()
   const ops = useTrialOps(trial.id)
-  const waiting = ops.filter((o): o is Extract<Op, { kind: 'upload_attachment' }> => o.kind === 'upload_attachment')
-  const [problems, setProblems] = useState<string[]>([])
-  const [keeping, setKeeping] = useState(false)
+  const waiting = ops.filter((o): o is Extract<Op, { kind: 'upload_attachment' }> => o.kind === 'upload_attachment' && !o.reading)
+  const files = trial.attachments.filter((a) => !a.reading)
   const [opening, setOpening] = useState<number | null>(null)
-  const canAttach = trial.actions.attach
   const canDelete = trial.actions.edit
   const refresh = () => qc.invalidateQueries({ queryKey: ['trial', trial.id] })
-
-  // Every photo and file is first copied into the app's own storage, then
-  // uploaded in order with a client_id: now when online, later when not.
-  async function upload(files: PickedFile[]) {
-    if (!files.length) return
-    const { upload: good, problems: skipped } = planUploads(files, trial.attachments.length + waiting.length)
-    setKeeping(true)
-    try {
-      const failed = await queueFiles(trial.id, good)
-      setProblems([...skipped, ...failed])
-      const kept = good.length - failed.length
-      if (kept) {
-        const what = kept === 1 ? 'File saved' : `${kept} files saved`
-        notify({ tone: 'info', text: online ? `${what}. Uploading now.` : queuedNote(what) })
-      }
-    } finally {
-      setKeeping(false)
-    }
-  }
 
   async function retryUpload(op: Op) { await outbox.retry(op.id); kick() }
   function discardUpload(op: Extract<Op, { kind: 'upload_attachment' }>) {
@@ -286,38 +268,6 @@ function Attachments() {
       { text: 'Keep it', style: 'cancel' },
       { text: 'Discard', style: 'destructive', onPress: () => { void outbox.discard(op.id) } },
     ])
-  }
-
-  async function takePhoto() {
-    try { await photo() } catch { setProblems(['The camera could not be opened. Try again, or use Choose file.']) }
-  }
-
-  async function photo() {
-    const perm = await ImagePicker.requestCameraPermissionsAsync()
-    if (!perm.granted) {
-      Alert.alert('Camera access is off', 'Allow CCA to use the camera in your phone settings to photograph cubes and slump tests.', [
-        { text: 'Not now', style: 'cancel' },
-        ...(perm.canAskAgain ? [] : [{ text: 'Open settings', onPress: () => { Linking.openSettings() } }]),
-      ])
-      return
-    }
-    const r = await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], quality: 0.7 })
-    if (r.canceled || !r.assets?.length) return
-    const a = r.assets[0]
-    const name = photoName(a.fileName, a.mimeType)
-    await upload([{ uri: a.uri, name, type: a.mimeType ?? MIME[extOf(name)] ?? 'image/jpeg', size: a.fileSize }])
-  }
-
-  async function chooseFile() {
-    let r: DocumentPicker.DocumentPickerResult
-    try {
-      r = await DocumentPicker.getDocumentAsync({ multiple: true, copyToCacheDirectory: true, type: Object.values(MIME).filter((v, i, xs) => xs.indexOf(v) === i) })
-    } catch {
-      setProblems(['Files could not be opened on this phone. Try again.'])
-      return
-    }
-    if (r.canceled || !r.assets?.length) return
-    await upload(r.assets.map((a) => ({ uri: a.uri, name: a.name, type: a.mimeType ?? MIME[extOf(a.name)] ?? 'application/octet-stream', size: a.size })))
   }
 
   const remove = useMutation({
@@ -340,26 +290,22 @@ function Attachments() {
     finally { setOpening(null) }
   }
 
+  if (!files.length && !waiting.length) return null
   return (
-    <Section title="Attachments">
-      <View accessibilityLiveRegion="polite" style={{ gap: 6 }}>
-        {keeping ? <Small>Saving files on this phone…</Small> : null}
-        {problems.length > 0 ? <Banner tone="error">{problems.join('\n')}</Banner> : null}
-      </View>
+    <Section title="Other files">
+      <Small>Added before photos and videos moved to Fresh concrete.</Small>
       {waiting.map((op) => (
         <View key={op.id} style={{ gap: 6 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-            <View style={{ width: 44, height: 44, borderRadius: radius.field, alignItems: 'center', justifyContent: 'center', backgroundColor: color.below.bg }}>
-              <Text style={{ fontFamily: font.bold, fontSize: 12, color: color.below.fg }}>{extOf(op.name).toUpperCase().slice(0, 4)}</Text>
-            </View>
+            <FileBadge name={op.name} />
             <View style={{ flex: 1, minWidth: 0 }}>
               <Text numberOfLines={1} style={{ fontFamily: font.semibold, fontSize: 15, color: color.ink }}>{op.name}</Text>
-              <Small>{op.reading ? `${readingLabel(op.reading)} reading. ` : ''}{op.state === 'failed' ? 'Not uploaded' : sending === op.id ? 'Uploading…' : online ? 'Not synced yet, waiting to upload' : 'Not synced yet, uploads when back online'}</Small>
+              <Small>{op.state === 'failed' ? 'Not uploaded' : sending === op.id ? 'Uploading…' : online ? 'Not synced yet, waiting to upload' : 'Not synced yet, uploads when back online'}</Small>
             </View>
           </View>
           {op.state === 'failed' ? (
             <>
-              <Banner tone="error">{op.error?.fields.file ?? op.error?.message ?? 'The server refused this file.'}</Banner>
+              <Banner tone="error">{op.error?.fields.file ?? op.error?.fields.reading ?? op.error?.message ?? 'The server refused this file.'}</Banner>
               <View style={{ flexDirection: 'row', gap: 10 }}>
                 <Button title="Discard" variant="danger" onPress={() => discardUpload(op)} />
                 <Button title="Retry" disabled={!online} onPress={() => { void retryUpload(op) }} />
@@ -368,53 +314,34 @@ function Attachments() {
           ) : null}
         </View>
       ))}
-      {trial.attachments.length === 0 && waiting.length === 0
-        ? <Small>No files yet. Add cube test reports, photos or videos from the site.</Small>
-        : trial.attachments.map((a) => {
-          const e = extOf(a.original_name).toUpperCase()
-          return (
-            <View key={a.id} style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-              <View style={{ width: 44, height: 44, borderRadius: radius.field, alignItems: 'center', justifyContent: 'center', backgroundColor: e === 'PDF' ? '#FCE4E4' : color.status.assigned_to_ct.bg }}>
-                <Text style={{ fontFamily: font.bold, fontSize: 12, color: e === 'PDF' ? '#8E0E14' : color.status.assigned_to_ct.fg }}>{e.slice(0, 4)}</Text>
-              </View>
-              <Pressable accessibilityRole="link" accessibilityLabel={`Open ${a.original_name}`} onPress={() => open(a.id, a.original_name, a.content_type)}
-                disabled={opening === a.id} style={{ flex: 1, minWidth: 0, minHeight: TOUCH, justifyContent: 'center' }}>
-                <Text numberOfLines={1} style={{ fontFamily: font.semibold, fontSize: 15, color: color.link }}>{a.original_name}</Text>
-                <Small>{opening === a.id ? 'Opening…' : `${a.reading ? `${readingLabel(a.reading)} reading, ` : ''}${fileSize(a.size)}, added ${shortDate(a.created_at)} by ${a.uploaded_by}${a.processing === 'pending' ? '. Being made smaller' : ''}`}</Small>
-              </Pressable>
-              {canDelete && (
-                <Pressable accessibilityRole="button" accessibilityLabel={`Remove ${a.original_name}`} onPress={() => confirmRemove(a.id, a.original_name)}
-                  disabled={remove.isPending && remove.variables === a.id}
-                  style={{ width: TOUCH, height: TOUCH, alignItems: 'center', justifyContent: 'center', opacity: remove.isPending && remove.variables === a.id ? 0.4 : 1 }}>
-                  <Svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke={color.error} strokeWidth={2} strokeLinecap="round">
-                    <Path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13" />
-                  </Svg>
-                </Pressable>
-              )}
-            </View>
-          )
-        })}
-      {canAttach && (
-        <View style={{ flexDirection: 'row', gap: 10 }}>
-          <IconButton label="Take photo" icon="camera" onPress={takePhoto} disabled={keeping} />
-          <IconButton label="Choose file" icon="file" onPress={chooseFile} disabled={keeping} />
+      {files.map((a) => (
+        <View key={a.id} style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+          <FileBadge name={a.original_name} />
+          <Pressable accessibilityRole="link" accessibilityLabel={`Open ${a.original_name}`} onPress={() => open(a.id, a.original_name, a.content_type)}
+            disabled={opening === a.id} style={{ flex: 1, minWidth: 0, minHeight: TOUCH, justifyContent: 'center' }}>
+            <Text numberOfLines={1} style={{ fontFamily: font.semibold, fontSize: 15, color: color.link }}>{a.original_name}</Text>
+            <Small>{opening === a.id ? 'Opening…' : `${fileSize(a.size)}, added ${shortDate(a.created_at)} by ${a.uploaded_by}`}</Small>
+          </Pressable>
+          {canDelete && (
+            <Pressable accessibilityRole="button" accessibilityLabel={`Remove ${a.original_name}`} onPress={() => confirmRemove(a.id, a.original_name)}
+              disabled={remove.isPending && remove.variables === a.id}
+              style={{ width: TOUCH, height: TOUCH, alignItems: 'center', justifyContent: 'center', opacity: remove.isPending && remove.variables === a.id ? 0.4 : 1 }}>
+              <Svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke={color.error} strokeWidth={2} strokeLinecap="round">
+                <Path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13" />
+              </Svg>
+            </Pressable>
+          )}
         </View>
-      )}
-      {canAttach ? <Small>Cube reports and other files: PDF or XLSX up to 25 MB, photos up to 20 MB, videos up to 100 MB and 1 minute, 30 files per trial. Photos and videos of a slump test go on its reading time in the fresh concrete step. The server stores photos and videos smaller. Files added offline upload when you are back online.</Small> : null}
+      ))}
     </Section>
   )
 }
 
-function IconButton({ label, icon, onPress, disabled }: { label: string; icon: 'camera' | 'file'; onPress: () => void; disabled?: boolean }) {
+function FileBadge({ name }: { name: string }) {
+  const e = extOf(name).toUpperCase()
   return (
-    <Pressable accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ disabled }} disabled={disabled} onPress={onPress}
-      style={({ pressed }) => ({ flex: 1, minHeight: 48, borderRadius: radius.field, borderWidth: 1, borderColor: color.ink, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: pressed ? color.head : color.surface, opacity: disabled ? 0.5 : 1 })}>
-      <Svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke={color.ink} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-        {icon === 'camera'
-          ? <><Path d="M4 8h3l2-3h6l2 3h3v11H4z" /><Circle cx={12} cy={13} r={3.5} /></>
-          : <><Path d="M14 3H6v18h12V7z" /><Polyline points="14 3 14 7 18 7" /><Rect x={9} y={12} width={6} height={0.5} /></>}
-      </Svg>
-      <Text style={{ fontFamily: font.semibold, fontSize: 15, color: color.ink }}>{label}</Text>
-    </Pressable>
+    <View style={{ width: 44, height: 44, borderRadius: radius.field, alignItems: 'center', justifyContent: 'center', backgroundColor: e === 'PDF' ? '#FCE4E4' : color.status.assigned_to_ct.bg }}>
+      <Text style={{ fontFamily: font.bold, fontSize: 12, color: e === 'PDF' ? '#8E0E14' : color.status.assigned_to_ct.fg }}>{e.slice(0, 4)}</Text>
+    </View>
   )
 }

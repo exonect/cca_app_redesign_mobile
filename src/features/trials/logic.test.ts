@@ -110,9 +110,10 @@ describe('attachments and signatures', () => {
     // iPhone camera photos are HEIC: accepted as they are (legacy took any image).
     expect(photoName('IMG_1.HEIC', 'image/heic', new Date('2026-11-04T09:15:30Z'))).toBe('IMG_1.HEIC')
     expect(photoName(null, 'image/heic', new Date('2026-11-04T09:15:30Z'))).toBe('Photo_20261104_091530.heic')
-    expect(attachmentProblem({ uri: 'x', name: 'notes.docx', type: '' })).toMatch(/not a PDF/)
-    expect(attachmentProblem({ uri: 'x', name: 'cube.pdf', type: '', size: 30 * 1024 * 1024 })).toMatch(/Files can be up to 25 MB/)
-    expect(attachmentProblem({ uri: 'x', name: 'cube.pdf', type: '', size: 1000 })).toBeNull()
+    expect(attachmentProblem({ uri: 'x', name: 'notes.docx', type: '' })).toMatch(/add photos .* or videos/)
+    expect(attachmentProblem({ uri: 'x', name: 'cube.pdf', type: '', size: 1000 })).toMatch(/add photos .* or videos/)
+    expect(attachmentProblem({ uri: 'x', name: 'IMG_2.jpg', type: '', size: 30 * 1024 * 1024 })).toMatch(/Photos can be up to 20 MB/)
+    expect(attachmentProblem({ uri: 'x', name: 'IMG_2.jpg', type: '', size: 1000 })).toBeNull()
   })
 
   it('draws strokes as SVG paths', () => {

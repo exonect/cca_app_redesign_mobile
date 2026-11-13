@@ -273,18 +273,24 @@ describe('final server rules for trial steps', () => {
   })
 })
 
-describe('attachments', () => {
+describe('attachments: photos and videos per reading time (UAT, 13 Nov 2026)', () => {
   const file = (name: string, size = 1000) => ({ uri: `file:///${name}`, name, type: '', size })
-  it('accepts iPhone HEIC and other photo types (T-55)', () => {
-    expect(planUploads([file('IMG_1.HEIC'), file('b.heif'), file('c.webp'), file('d.gif')], 0).problems).toEqual([])
-    expect(planUploads([file('x.exe')], 0).problems).toEqual(['x.exe is not a PDF, XLSX, photo (JPG, PNG, HEIC, WEBP, GIF) or video (MP4, MOV) file.'])
+  const at = (existing = 0) => ({ label: '30 min', existing })
+  it('accepts iPhone HEIC and other photo and video types, and nothing else', () => {
+    expect(planUploads([file('IMG_1.HEIC'), file('b.heif'), file('c.webp'), file('d.mov')], 0, at()).problems).toEqual([])
+    expect(planUploads([file('x.exe'), file('cubes.pdf')], 0, at()).problems).toEqual([
+      'x.exe: add photos (JPG, PNG, HEIC, WEBP) or videos (MP4, MOV) here.',
+      'cubes.pdf: add photos (JPG, PNG, HEIC, WEBP) or videos (MP4, MOV) here.',
+    ])
   })
-  it('skips empty files and anything over 30 files on the trial', () => {
-    expect(planUploads([file('a.pdf', 0)], 0)).toEqual({ upload: [], problems: ['a.pdf is empty.'] })
-    const r = planUploads([file('a.pdf'), file('b.png'), file('c.jpg')], 28)
-    expect(r.upload.map((f) => f.name)).toEqual(['a.pdf', 'b.png'])
-    expect(r.problems).toEqual(['A trial can have up to 30 files, so only 2 more can be added. Not added: c.jpg.'])
-    expect(planUploads([file('a.pdf')], 30).problems).toEqual(['A trial can have up to 30 files. Remove one first. Not added: a.pdf.'])
+  it('skips empty files, anything over 5 on the time and over 45 on the trial', () => {
+    expect(planUploads([file('a.jpg', 0)], 0, at())).toEqual({ upload: [], problems: ['a.jpg is empty.'] })
+    const r = planUploads([file('a.jpg'), file('b.png'), file('c.jpg')], 10, at(3))
+    expect(r.upload.map((f) => f.name)).toEqual(['a.jpg', 'b.png'])
+    expect(r.problems).toEqual(['30 min: up to 5 photos or videos per reading time. Not added: c.jpg.'])
+    const t = planUploads([file('a.jpg'), file('b.png')], 44, at())
+    expect(t.problems).toEqual(['A trial can have up to 45 photos and videos, so only 1 more can be added. Not added: b.png.'])
+    expect(planUploads([file('a.jpg')], 45, at()).problems).toEqual(['A trial can have up to 45 photos and videos. Remove one first. Not added: a.jpg.'])
   })
 })
 

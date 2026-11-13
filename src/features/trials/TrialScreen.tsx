@@ -292,7 +292,7 @@ function Workspace({ trial, project, projectError, step, why, synced }: {
       )}
       {trial.status === 'in_progress' && (
         <Banner tone="info">
-          This trial is in progress, so its steps are read only, as in the old app.{trial.actions.close ? ' Add cube results and files, then close it with a conclusion in step 5.' : ''}
+          This trial is in progress, so its steps are read only, as in the old app.{trial.actions.close ? ' Add cube results, and photos or videos under the fresh concrete readings, then close it with a conclusion in step 5.' : ''}
         </Banner>
       )}
       {trial.status === 'draft' && trial.actions.start && !open && (

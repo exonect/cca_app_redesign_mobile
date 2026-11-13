@@ -679,3 +679,25 @@ describe('number and name fields take only what fits (UAT, 12 Nov 2026)', () => 
     expect(await typed('Site QC in charge, name', "N@eil D'Souza#1")).toBe("Neil D'Souza")
   })
 })
+
+describe('conclusion has no file upload (UAT, 13 Nov 2026)', () => {
+  const loose = { id: 4, original_name: 'cubes.pdf', size: 52_000, content_type: 'application/pdf', reading: '', uploaded_by: 'Chetan', created_at: '2026-11-10T05:00:00Z' }
+  const timed = { ...loose, id: 5, original_name: 'slump.jpg', content_type: 'image/jpeg', reading: '30' }
+
+  it('shows no attachments panel; photos and videos go under a reading time', async () => {
+    serve(makeTrial({ attachments: [timed] as Trial['attachments'] }))
+    await open(5)
+    await screen.findByText('Signatures')
+    expect(screen.queryByText('Attachments')).toBeNull()
+    expect(screen.queryByText('Other files')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Choose file' })).toBeNull()
+  })
+
+  it('lists files added without a reading time under Other files', async () => {
+    serve(makeTrial({ attachments: [loose, timed] as Trial['attachments'] }))
+    await open(5)
+    expect(await screen.findByText('Other files')).toBeTruthy()
+    expect(screen.getByLabelText('Open cubes.pdf')).toBeTruthy()
+    expect(screen.queryByLabelText('Open slump.jpg')).toBeNull()
+  })
+})
