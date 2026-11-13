@@ -6,7 +6,7 @@ import { planUploads } from './attachments'
 import { CAST_ERRORS, castParts, isFutureDay } from './castAt'
 import {
   conclusionForm, conclusionProblems, cubePayload, cubeProblem, cubeSoftWarnings, decimalProblem, decimalTotal, freshForm, freshPayload, freshProblems,
-  freshSoftWarnings, mixForm, mixProblems, mixSoftWarnings, pathLabel, sccNumber, SIGNATURE_MAX_CHARS, sieveForm, sieveProblems, sortSlumpList, stepErrors,
+  freshSoftWarnings, mixForm, mixPayload, mixProblems, mixSoftWarnings, withCoarseSource, pathLabel, sccNumber, SIGNATURE_MAX_CHARS, sieveForm, sieveProblems, sortSlumpList, stepErrors,
   testedOnDefault, testedOnIso,
 } from './forms'
 import { sccOptions, slumpChoices } from './FreshStep'
@@ -195,6 +195,20 @@ describe('final server rules for trial steps', () => {
     expect(e.dosage_1).toBe('Choose the product before entering its dosage.')
     expect(e.dosage_2).toBe('Choose the product before entering its dosage.')
     expect(mixProblems({ ...f, admixture_1: '3', admixture_2: '4' })).toEqual({})
+  })
+
+  it('shows 0 for blank mix numbers and does not save rows that are only the 0 defaults (UAT, 13 Nov 2026)', () => {
+    const t = { ...trial, batch_size: null, dosage_1: null, dosage_2: null, admixture_1: null, admixture_2: null,
+      materials: { cement: { ssd: '300', source: 'UltraTech' }, '20mm': { ssd: '546', absorption: '0.50' } } } as Trial
+    const f = mixForm(t)
+    expect([f.batch_size, f.dosage_1, f.dosage_2]).toEqual(['0', '0', '0'])
+    expect(f.materials.water).toMatchObject({ ssd: '0', absorption: '0', moisture: '0' })
+    expect(mixProblems(f)).toEqual({}) // a 0 dosage with no product is not a dosage
+    expect(mixSoftWarnings(f)).toEqual({})
+    const body = mixPayload(f)
+    expect(body).toMatchObject({ batch_size: '0', dosage_1: null, dosage_2: null })
+    expect(body.materials).toEqual({ cement: { ssd: '300', source: 'UltraTech' }, '20mm': { ssd: '546', absorption: '0.50', moisture: '0' } })
+    expect(withCoarseSource(f, '20mm', 'Quarry A').materials['10mm'].source).toBe('')
   })
 
   it('checks SSD 0 to 100000 (3000 soft), absorption and moisture 0 to 100, and source text up to 100', () => {

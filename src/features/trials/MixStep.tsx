@@ -16,7 +16,7 @@ import { color, font, TOUCH } from '@/ui/theme'
 
 import { CastAtField } from './CastAtField'
 import { num } from './format'
-import { addMineral, LIMITS, mixForm, mixPayload, mixProblems, mixRows, mixSoftWarnings, outOfRange, removeMineral, withCoarseSource, type MaterialEntry, type MixForm } from './forms'
+import { addMineral, LIMITS, MIX_ZERO, mixForm, mixPayload, mixProblems, mixRows, mixSoftWarnings, outOfRange, removeMineral, withCoarseSource, type MaterialEntry, type MixForm } from './forms'
 import { onNewFormulation, takeNewFormulation } from './newFormulation'
 import { CellInput, cell, Output, Section, SourceNote, StepActions, TableHead, TickIcon, WarnIcon, WarnText } from './parts'
 import { useStepForm, useWorkspace } from './workspace'
@@ -158,13 +158,13 @@ export function MixStep({ readOnly, banners }: { readOnly: boolean; banners: Rea
           <View style={{ flex: 1 }}>
             <Field label="Dosage" error={err('dosage_1')}>
               <TextField accessibilityLabel="Dosage, percent of binder" unit="%" keyboardType="decimal-pad" inputMode="decimal" value={form.dosage_1}
-                editable={!readOnly} invalid={!!err('dosage_1')} onChangeText={(v) => set('dosage_1', trialNumberFilter('dosage', v))} style={{ textAlign: 'right' }} />
+                editable={!readOnly} invalid={!!err('dosage_1')} onChangeText={(v) => set('dosage_1', trialNumberFilter('dosage', v))} selectTextOnFocus onBlur={() => { if (form.dosage_1.trim() === '') set('dosage_1', MIX_ZERO) }} style={{ textAlign: 'right' }} />
             </Field>
           </View>
           <View style={{ flex: 1 }}>
             <Field label="Batch size" error={err('batch_size')}>
               <TextField accessibilityLabel="Batch size, cubic metres" unit="m³" keyboardType="decimal-pad" inputMode="decimal" value={form.batch_size}
-                editable={!readOnly} invalid={!!err('batch_size')} onChangeText={(v) => set('batch_size', trialNumberFilter('batch_size', v))} style={{ textAlign: 'right' }} />
+                editable={!readOnly} invalid={!!err('batch_size')} onChangeText={(v) => set('batch_size', trialNumberFilter('batch_size', v))} selectTextOnFocus onBlur={() => { if (form.batch_size.trim() === '') set('batch_size', MIX_ZERO) }} style={{ textAlign: 'right' }} />
             </Field>
           </View>
         </View>
@@ -178,7 +178,7 @@ export function MixStep({ readOnly, banners }: { readOnly: boolean; banners: Rea
             <Field label="Second product dosage" error={err('dosage_2')}>
               <TextField accessibilityLabel="Second product dosage, percent of binder" unit="%" keyboardType="decimal-pad" inputMode="decimal"
                 value={form.dosage_2} editable={!readOnly && !!form.admixture_2} invalid={!!err('dosage_2')}
-                onChangeText={(v) => set('dosage_2', trialNumberFilter('dosage', v))} style={{ textAlign: 'right' }} />
+                onChangeText={(v) => set('dosage_2', trialNumberFilter('dosage', v))} selectTextOnFocus onBlur={() => { if (form.dosage_2.trim() === '') set('dosage_2', MIX_ZERO) }} style={{ textAlign: 'right' }} />
             </Field>
             {!readOnly && (
               <Pressable accessibilityRole="button" onPress={() => { setSecond(false); setForm((f) => ({ ...f, admixture_2: '', dosage_2: '' })) }} style={{ minHeight: TOUCH, justifyContent: 'center' }}>
@@ -230,7 +230,7 @@ export function MixStep({ readOnly, banners }: { readOnly: boolean; banners: Rea
           const dose = m === 'admixture_1' ? form.dosage_1 : m === 'admixture_2' ? form.dosage_2 : ''
           // A server error on this material ("materials.cement.source"), shown on the row even while it is folded.
           const rowError = Object.entries(errors).find(([k]) => k.startsWith(`materials.${m}.`))?.[1]
-          const suggested = admix && n(dose) !== null && binder ? admixtureQty(binder, dose) : null
+          const suggested = admix && (n(dose) ?? 0) > 0 && binder ? admixtureQty(binder, dose) : null
           return (
             <View key={m} style={{ borderTopWidth: 1, borderColor: color.divider, backgroundColor: expanded ? color.head : color.surface }}>
               <Pressable accessibilityRole="button" accessibilityState={{ expanded }}
@@ -256,7 +256,7 @@ export function MixStep({ readOnly, banners }: { readOnly: boolean; banners: Rea
                     <>
                       <Labeled label="Quantity, kg/m³">
                         <CellInput accessibilityLabel={`${name} quantity, kilograms per cubic metre`} value={entry.ssd} editable={!readOnly}
-                          invalid={outOfRange(entry.ssd, LIMITS.ssd) || !!err(`materials.${m}.ssd`)} warn={!!warns[`materials.${m}.ssd`]} onChangeText={(v) => setMat(m, 'ssd', trialNumberFilter('ssd', v))} />
+                          invalid={outOfRange(entry.ssd, LIMITS.ssd) || !!err(`materials.${m}.ssd`)} warn={!!warns[`materials.${m}.ssd`]} onChangeText={(v) => setMat(m, 'ssd', trialNumberFilter('ssd', v))} selectTextOnFocus onBlur={() => { if (entry.ssd.trim() === '') setMat(m, 'ssd', MIX_ZERO) }} />
                       </Labeled>
                       <Small>{!product ? 'Choose a product above, then enter the quantity used.'
                         : suggested !== null ? `The dosage gives ${f2(suggested)} kg/m³ (dosage % of the binder). Enter the quantity used.`
@@ -266,17 +266,17 @@ export function MixStep({ readOnly, banners }: { readOnly: boolean; banners: Rea
                     <View style={{ flexDirection: 'row', gap: 8 }}>
                       <Labeled label="SSD design, kg">
                         <CellInput accessibilityLabel={`${label} SSD design, kilograms per cubic metre`} value={entry.ssd} editable={!readOnly}
-                          invalid={outOfRange(entry.ssd, LIMITS.ssd) || !!err(`materials.${m}.ssd`)} warn={!!warns[`materials.${m}.ssd`]} onChangeText={(v) => setMat(m, 'ssd', trialNumberFilter('ssd', v))} />
+                          invalid={outOfRange(entry.ssd, LIMITS.ssd) || !!err(`materials.${m}.ssd`)} warn={!!warns[`materials.${m}.ssd`]} onChangeText={(v) => setMat(m, 'ssd', trialNumberFilter('ssd', v))} selectTextOnFocus onBlur={() => { if (entry.ssd.trim() === '') setMat(m, 'ssd', MIX_ZERO) }} />
                       </Labeled>
                       {agg && (
                         <>
                           <Labeled label="Absorption, %">
                             <CellInput accessibilityLabel={`${label} absorption, percent`} value={entry.absorption} editable={!readOnly}
-                              invalid={outOfRange(entry.absorption, LIMITS.percent) || !!err(`materials.${m}.absorption`)} onChangeText={(v) => setMat(m, 'absorption', trialNumberFilter('percent', v))} />
+                              invalid={outOfRange(entry.absorption, LIMITS.percent) || !!err(`materials.${m}.absorption`)} onChangeText={(v) => setMat(m, 'absorption', trialNumberFilter('percent', v))} selectTextOnFocus onBlur={() => { if (entry.absorption.trim() === '') setMat(m, 'absorption', MIX_ZERO) }} />
                           </Labeled>
                           <Labeled label="Moisture, %">
                             <CellInput accessibilityLabel={`${label} moisture, percent`} value={entry.moisture} editable={!readOnly}
-                              invalid={outOfRange(entry.moisture, LIMITS.percent) || !!err(`materials.${m}.moisture`)} onChangeText={(v) => setMat(m, 'moisture', trialNumberFilter('percent', v))} />
+                              invalid={outOfRange(entry.moisture, LIMITS.percent) || !!err(`materials.${m}.moisture`)} onChangeText={(v) => setMat(m, 'moisture', trialNumberFilter('percent', v))} selectTextOnFocus onBlur={() => { if (entry.moisture.trim() === '') setMat(m, 'moisture', MIX_ZERO) }} />
                           </Labeled>
                         </>
                       )}

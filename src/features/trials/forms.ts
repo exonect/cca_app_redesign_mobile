@@ -312,7 +312,10 @@ export type MixForm = {
   minerals: string[]
 }
 
-const EMPTY_MATERIAL: MaterialEntry = { ssd: '', absorption: '', moisture: '', source: '', cement_type: '', name: '' }
+/** Mix design numbers start at 0, not blank (UAT, 13 Nov 2026). The server's start checks treat 0 as not entered. */
+export const MIX_ZERO = '0'
+const zeroed = (v: unknown) => str(v).trim() || MIX_ZERO
+const EMPTY_MATERIAL: MaterialEntry = { ssd: MIX_ZERO, absorption: MIX_ZERO, moisture: MIX_ZERO, source: '', cement_type: '', name: '' }
 const filledRow = (x: Record<string, unknown> | undefined) => !!x && Object.values(x).some((v) => v !== null && v !== undefined && String(v).trim() !== '')
 
 /** The rows the table shows, in order: added mineral admixtures, then cement to water. */
@@ -337,12 +340,12 @@ export function mixForm(t: Trial): MixForm {
   return {
     cast_date: cast.date, cast_time: cast.time,
     grade_of_concrete: str(t.grade_of_concrete?.id),
-    batch_size: str(t.batch_size),
-    admixture_1: str(t.admixture_1?.id), dosage_1: str(t.dosage_1),
-    admixture_2: str(t.admixture_2?.id), dosage_2: str(t.dosage_2),
+    batch_size: zeroed(t.batch_size),
+    admixture_1: str(t.admixture_1?.id), dosage_1: zeroed(t.dosage_1),
+    admixture_2: str(t.admixture_2?.id), dosage_2: zeroed(t.dosage_2),
     materials: Object.fromEntries(keys.map((m) => {
       const x = stored[m] ?? {}
-      return [m, { ssd: str(x.ssd), absorption: str(x.absorption), moisture: str(x.moisture), source: str(x.source), cement_type: str(x.cement_type), name: str(x.name) }]
+      return [m, { ssd: zeroed(x.ssd), absorption: zeroed(x.absorption), moisture: zeroed(x.moisture), source: str(x.source), cement_type: str(x.cement_type), name: str(x.name) }]
     })),
     // A mineral row shows when the trial holds anything for it (imported history included).
     minerals: keys.filter((m) => isMineral(m) && filledRow(stored[m])),
@@ -371,7 +374,7 @@ export function mixProblems(f: MixForm, status?: Trial['status']): Record<string
   for (const [k, label, product] of [['dosage_1', 'the dosage', 'admixture_1'], ['dosage_2', 'the second dosage', 'admixture_2']] as const) {
     const msg = decimalProblem(f[k], { label, min: 0, max: 99.99, decimals: 2, maxDigits: 5 })
     if (msg) out[k] = msg
-    else if (!blank(f[k]) && blank(f[product])) out[k] = 'Choose the product before entering its dosage.'
+    else if (positive(f[k]) && blank(f[product])) out[k] = 'Choose the product before entering its dosage.' // 0 is the default
   }
   const batch = decimalProblem(f.batch_size, { label: 'the batch size', min: 0, decimals: 4, maxDigits: 7 })
   if (batch) out.batch_size = batch
@@ -406,7 +409,8 @@ export function mixPayload(f: MixForm) {
     if (m === 'cement' && x.cement_type) row.cement_type = x.cement_type
     // An added mineral row is kept even before its values are in (it then needs its source to start).
     if (isMineral(m) && x.name.trim()) row.name = x.name.trim()
-    if (Object.values(row).some((v) => v !== null)) materials[m] = row
+    // A row holding only the 0 defaults is not entered: left out, as a blank row was before (UAT, 13 Nov 2026).
+    if (Object.entries(row).some(([k, v]) => v !== null && (!['ssd', 'absorption', 'moisture'].includes(k) || positive(v)))) materials[m] = row
   }
   const cast = castIso(f.cast_date, f.cast_time)
   return {
@@ -414,8 +418,9 @@ export function mixPayload(f: MixForm) {
     cast_at: cast.error ? `invalid:${f.cast_date}|${f.cast_time}` : cast.iso,
     grade_of_concrete: idOrNull(f.grade_of_concrete),
     batch_size: orNull(f.batch_size),
-    admixture_1: idOrNull(f.admixture_1), dosage_1: orNull(f.dosage_1),
-    admixture_2: idOrNull(f.admixture_2), dosage_2: orNull(f.dosage_2),
+    // A 0 dosage with no product chosen is the default, not a dosage: sent as none.
+    admixture_1: idOrNull(f.admixture_1), dosage_1: f.admixture_1 || positive(f.dosage_1) ? orNull(f.dosage_1) : null,
+    admixture_2: idOrNull(f.admixture_2), dosage_2: f.admixture_2 || positive(f.dosage_2) ? orNull(f.dosage_2) : null,
     materials,
   }
 }
@@ -440,7 +445,7 @@ export function mixSoftWarnings(f: MixForm): Record<string, string> {
 export function withCoarseSource(f: MixForm, m: string, source: string): MixForm {
   const materials = { ...f.materials, [m]: { ...f.materials[m], source } }
   const other = m === '20mm' ? '10mm' : m === '10mm' ? '20mm' : null
-  if (other && !blank(f.materials[other].ssd)) materials[other] = { ...f.materials[other], source }
+  if (other && positive(f.materials[other].ssd)) materials[other] = { ...f.materials[other], source }
   return { ...f, materials }
 }
 

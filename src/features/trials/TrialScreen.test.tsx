@@ -645,6 +645,19 @@ describe('number and name fields take only what fits (UAT, 12 Nov 2026)', () => 
     expect(await typed('Dosage, percent of binder', 'abc0.8%')).toBe('0.8')
   })
 
+  it('mix design: blank numbers show 0 and a cleared field gets 0 back (UAT, 13 Nov 2026)', async () => {
+    serve(makeTrial({ ...STEP1, status: 'draft', code: null, batch_size: null, dosage_1: null, dosage_2: null, materials: {},
+      actions: { edit: true, start: false, close: false, edit_cubes: true, delete: false, attach: true } }))
+    await open(2)
+    const batch = await screen.findByLabelText('Batch size, cubic metres')
+    expect(batch.props.value).toBe('0')
+    expect(batch.props.selectTextOnFocus).toBe(true)
+    expect(screen.getByLabelText('Dosage, percent of binder').props.value).toBe('0')
+    await fireEvent.changeText(batch, '')
+    await fireEvent(screen.getByLabelText('Batch size, cubic metres'), 'blur')
+    expect(screen.getByLabelText('Batch size, cubic metres').props.value).toBe('0')
+  })
+
   it('fresh concrete: density and site temperature', async () => {
     serve(draft())
     await open(3)
