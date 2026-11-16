@@ -105,3 +105,30 @@ describe('who adds recipes (UAT, 12 Nov 2026)', () => {
     recipe.locked = true
   })
 })
+
+describe('product name on a locked recipe (UAT, 16 Nov 2026)', () => {
+  const unnamed = { ...recipe, product_name: '', version: 1, label: 'T-Lab-672527-675689-1126-01' }
+
+  it('an Admin names it; trials keep the recipe', async () => {
+    mockApi.mockImplementation(async (path: string, opts?: { method?: string; body?: unknown }) => {
+      if (path === '/recipes/9/' && !opts?.method) return unnamed
+      if (path === '/recipes/9/' && opts?.method === 'PATCH') return { ...unnamed, product_name: 'Tecnos 410', label: 'Tecnos 410 V1' }
+      throw new Error(`unexpected ${path}`)
+    })
+    await render(<QueryClientProvider client={client()}><RecipeScreen id="9" /></QueryClientProvider>)
+    const field = await screen.findByLabelText('Product name')
+    expect(screen.getByRole('button', { name: 'Save name' })).toBeDisabled()
+    await fireEvent.changeText(field, ' Tecnos  410 ')
+    await fireEvent.press(screen.getByRole('button', { name: 'Save name' }))
+    await waitFor(() => expect(mockApi).toHaveBeenCalledWith('/recipes/9/', { method: 'PATCH', body: { product_name: 'Tecnos 410' } }))
+    expect(await screen.findByText('Saved as Tecnos 410 V1.')).toBeTruthy()
+  })
+
+  it('is not offered to other roles', async () => {
+    mockRole = 'CT'
+    mockApi.mockImplementation(async () => unnamed)
+    await render(<QueryClientProvider client={client()}><RecipeScreen id="9" /></QueryClientProvider>)
+    await screen.findByText('Only an Admin can change recipes or their status.')
+    expect(screen.queryByLabelText('Product name')).toBeNull()
+  })
+})

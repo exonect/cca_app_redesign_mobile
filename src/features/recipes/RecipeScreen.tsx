@@ -97,7 +97,7 @@ function Fact({ k, v }: { k: string; v: string }) {
 
 export function RecipeDetail({ recipe: r, canEdit, onEdit, onNewVersion }: { recipe: RecipeWithLock; canEdit: boolean; onEdit: () => void; onNewVersion: () => void }) {
   const qc = useQueryClient()
-  // On a locked recipe only the status (active or on hold) can still change.
+  // On a locked recipe only the status (active or on hold) and, for an Admin, the product name can still change.
   const status = useMutation({
     mutationFn: (next: Recipe['status']) => api<RecipeWithLock>(`/recipes/${r.id}/`, { method: 'PATCH', body: { status: next } }),
     onSuccess: (saved) => { qc.setQueryData(['recipe', String(saved.id)], saved); void qc.invalidateQueries({ queryKey: ['recipes'] }) },
@@ -117,6 +117,7 @@ export function RecipeDetail({ recipe: r, canEdit, onEdit, onNewVersion }: { rec
       {r.locked ? <Banner tone="info">{`${lockedNote(r.trial_count)} Changes go into a new version; the trials keep this one.`}</Banner> : null}
       {status.isError ? <ErrorState error={status.error} /> : null}
       <FlagBanner flags={r.flags} refresh={[['recipe', String(r.id)], ['recipes']]} what="recipe" />
+      {canEdit && r.locked ? <ProductNameCard recipe={r} /> : null}
       <Card title="RM composition">
         <CompositionView components={r.components} total={r.total} />
       </Card>
@@ -132,6 +133,48 @@ export function RecipeDetail({ recipe: r, canEdit, onEdit, onNewVersion }: { rec
         <Small>Only active recipes appear in the product list on trials.</Small>
       </Card>
     </Shell>
+  )
+}
+
+/** An Admin sets or changes the product name of a locked recipe at any time (UAT, 16 Nov 2026): its trials
+ * keep the recipe itself, only the name and version shown change. A name another product has continues that
+ * product's versions, confirmed first, as on the edit form. */
+function ProductNameCard({ recipe: r }: { recipe: RecipeWithLock }) {
+  const qc = useQueryClient()
+  const [name, setName] = useState(r.product_name)
+  const [prompt, setPrompt] = useState<string | null>(null)
+  const tidy = (v: string) => v.split(/\s+/).filter(Boolean).join(' ')
+  const changed = tidy(name) !== tidy(r.product_name)
+  const save = useMutation({
+    mutationFn: (confirm: boolean) => api<RecipeWithLock>(`/recipes/${r.id}/`, {
+      method: 'PATCH', body: { product_name: tidy(name), ...(confirm ? { confirm_new_version: true } : {}) },
+    }),
+    onSuccess: (saved) => {
+      setPrompt(null)
+      setName(saved.product_name)
+      qc.setQueryData(['recipe', String(saved.id)], saved)
+      void qc.invalidateQueries({ queryKey: ['recipes'] })
+    },
+    onError: (e) => {
+      if (e instanceof ApiError && e.status === 409 && e.code === 'new_version') {
+        setPrompt(e.message)
+        return
+      }
+      setPrompt(null)
+    },
+  })
+  return (
+    <Card title="Product name">
+      <Field label="Product name" hint="For example Neutrol 585. Its trials keep this recipe; only the name and version shown change.">
+        <TextField accessibilityLabel="Product name" maxLength={100} value={name} onChangeText={(t) => { setName(t); save.reset() }} />
+      </Field>
+      {save.isError && !prompt ? <Banner tone="error">{errorMessage(save.error, 'The name was not saved. Try again.')}</Banner> : null}
+      {save.isSuccess && !changed ? <Small>{`Saved as ${r.label}.`}</Small> : null}
+      <Button title="Save name" variant="primary" disabled={!changed} busy={save.isPending && !prompt} onPress={() => save.mutate(false)} />
+      <ConfirmSheet open={Boolean(prompt)} title="Save as a new version?" onClose={() => setPrompt(null)}
+        body={<View style={{ gap: 8 }}><Body>{prompt ?? ''}</Body><Body style={{ color: color.muted }}>The other versions stay unchanged and keep their trials.</Body></View>}
+        confirmLabel="Save new version" cancelLabel="Go back" busy={save.isPending} onConfirm={() => save.mutate(true)} />
+    </Card>
   )
 }
 
