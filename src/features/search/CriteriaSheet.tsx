@@ -2,13 +2,13 @@ import { useState, type ReactNode } from 'react'
 import { Pressable, Text, View } from 'react-native'
 
 import { useLookups } from '@/api/hooks'
-import { Banner, Button, Chips, Field, H2, NumberField, Picker, Small, TextField } from '@/ui/kit'
+import { Banner, Button, Chips, Field, H2, MultiPicker, NumberField, Picker, Small, TextField } from '@/ui/kit'
 import { color, font } from '@/ui/theme'
 
 import { Sheet } from '@/features/projects/Sheet'
 
 import {
-  emptyCriteria, FAMILIES, MINERALS, minutesLabel, rangeHint, RETENTION_MINUTES, SAND_TYPES, SLUMP_TOL, STRENGTH_AGES,
+  emptyCriteria, FAMILIES, minutesLabel, rangeHint, RETENTION_MINUTES, SAND_TYPES, SLUMP_TOL, STRENGTH_AGES,
   validate, type Criteria, type Errors, type ServerErrors,
 } from './criteria'
 import { SieveSection } from './SieveSection'
@@ -62,6 +62,7 @@ function Body_({ open, initial, onClose, onApply, serverErrors }: Props) {
       <Group title="Cement">
         <LookupMulti category="cement_brand" label="Cement brand" noun="cement brand" value={c.cement_brand} error={errors.cement_brand} onChange={(v) => set('cement_brand', v)} />
         <LookupMulti category="cement_grade" label="Cement grade" noun="cement grade" value={c.cement_grade} error={errors.cement_grade} onChange={(v) => set('cement_grade', v)} />
+        <MineralPicker value={c.mineral_admixtures} onChange={(v) => set('mineral_admixtures', v)} />
       </Group>
 
       <Group title="Concrete">
@@ -74,10 +75,6 @@ function Body_({ open, initial, onClose, onApply, serverErrors }: Props) {
           <TextField accessibilityLabel="Cementitious content, kg per cubic metre" keyboardType="numbers-and-punctuation" unit="kg/m³"
             invalid={Boolean(errors.cementitious)} value={c.cementitious} onChangeText={(t) => set('cementitious', t)} />
         </Field>
-      </Group>
-
-      <Group title="Mineral admixtures" note="Any selected used">
-        <Chips label="Mineral admixtures" options={MINERALS} value={c.mineral_admixtures} onChange={(v) => set('mineral_admixtures', v)} />
       </Group>
 
       <Group title="Sand">
@@ -169,6 +166,23 @@ export function LookupMulti({ category, label, noun, value, onChange, error }: {
           ))}
         </View>
       ) : null}
+    </Field>
+  )
+}
+
+/**
+ * Mineral admixtures (UAT, 17 Nov 2026): a searchable multi select over the Mineral Admixture master list,
+ * the legacy search's dropdown and the same list as the project form and the mix design. The server matches
+ * each name to the mix design's material key. A value not on the list (an older saved search) stays shown.
+ */
+function MineralPicker({ value, onChange }: { value: string[]; onChange: (v: string[]) => void }) {
+  const q = useLookups('mineral_admixture')
+  const names = (q.data ?? []).map((l) => l.value)
+  const extra = value.filter((v) => !names.some((n) => n.toLowerCase() === v.toLowerCase()))
+  return (
+    <Field label="Mineral admixtures, any used" hint={q.isError ? 'This list could not be loaded. Close and open the criteria again.' : 'Trials that used at least one of these.'}>
+      <MultiPicker label="Mineral admixtures" placeholder="Any mineral admixture" loading={q.isLoading} value={value} onChange={onChange}
+        options={[...names, ...extra].map((n) => ({ value: n, label: n }))} />
     </Field>
   )
 }

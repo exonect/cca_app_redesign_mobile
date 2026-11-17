@@ -1,6 +1,6 @@
 // Legacy: an empty search lists every product; trials outside your projects are not named.
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { fireEvent, render, screen } from '@testing-library/react-native'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react-native'
 
 import { SearchScreen } from './SearchScreen'
 
@@ -124,6 +124,36 @@ describe('sieve analysis criterion (client decision 5 Nov 2026: as the web)', ()
     expect(await screen.findByText('Something went wrong on the server. Try again.')).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Try again' })).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'Fix criteria' })).toBeNull()
+    qc.clear()
+  })
+})
+
+describe('mineral admixtures criterion (UAT, 17 Nov 2026: master list dropdown, as the old app)', () => {
+  beforeEach(() => mockApi.mockReset())
+
+  it('picks several names from the master list and searches with them', async () => {
+    mockApi.mockImplementation(async (path: string, opts?: { query?: { category?: string } }) => {
+      if (path === '/lookups/' && opts?.query?.category === 'mineral_admixture') {
+        return ['ALCOFINE', 'CRYSTALLINE', 'FLYASH', 'GGBS', 'METAKOALIN'].map((value, i) => ({ id: 20 + i, category: 'mineral_admixture', value }))
+      }
+      if (path === '/lookups/') return []
+      if (path === '/search/') return { criteria: {}, products: 0, trials: 0, results: [] }
+      throw new Error(`unexpected ${path}`)
+    })
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } })
+    await render(<QueryClientProvider client={qc}><SearchScreen /></QueryClientProvider>)
+    await fireEvent.press(screen.getByRole('button', { name: 'Edit criteria' }))
+    const field = await screen.findByRole('button', { name: /^Mineral admixtures: none chosen/ })
+    await fireEvent.press(field)
+    expect(screen.getAllByRole('checkbox').map((c) => c.props.accessibilityLabel)).toEqual(['ALCOFINE', 'CRYSTALLINE', 'FLYASH', 'GGBS', 'METAKOALIN'])
+    await fireEvent.changeText(screen.getByLabelText('Search Mineral admixtures'), 'meta')
+    await fireEvent.press(screen.getByRole('checkbox', { name: 'METAKOALIN' }))
+    await fireEvent.changeText(screen.getByLabelText('Search Mineral admixtures'), '')
+    await fireEvent.press(screen.getByRole('checkbox', { name: 'GGBS' }))
+    await fireEvent.press(screen.getByRole('button', { name: 'Done' }))
+    await fireEvent.press(screen.getByRole('button', { name: 'Search products' }))
+    await waitFor(() => expect(mockApi).toHaveBeenCalledWith('/search/', { method: 'POST', body: { mineral_admixtures: ['METAKOALIN', 'GGBS'] } }))
+    expect(await screen.findByText('METAKOALIN, GGBS')).toBeTruthy()
     qc.clear()
   })
 })

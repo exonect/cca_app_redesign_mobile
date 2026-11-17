@@ -29,10 +29,6 @@ export const SLUMP_TOL = 20
 export const STRENGTH_UP = 5
 export const CEMENTITIOUS_TOL = 50
 
-export const MINERALS = [
-  { value: 'fly_ash', label: 'Fly ash' }, { value: 'ggbs', label: 'GGBS' },
-  { value: 'alcofine', label: 'Alcofine' }, { value: 'microsilica', label: 'Microsilica' },
-]
 export const SAND_TYPES = [
   { value: '', label: 'Any sand' }, { value: 'river', label: 'River sand' }, { value: 'crushed', label: 'Crushed sand' }, { value: 'both', label: 'River or crushed' },
 ]
@@ -236,7 +232,9 @@ export function criteriaChips(c: Criteria): { text: string; label: string }[] {
   const cem = splitNumbers(c.cementitious)
   if (cem.length) add(`Binder ${cem.join(', ')} ±${CEMENTITIOUS_TOL}`, `cementitious content, ${cem.join(' or ')} plus or minus ${CEMENTITIOUS_TOL} kilograms per cubic metre`)
   if (c.mineral_admixtures.length) {
-    const names = c.mineral_admixtures.map((m) => MINERALS.find((x) => x.value === m)?.label ?? m)
+    // Master list names, as chosen (UAT, 17 Nov 2026); an older saved search may hold a key such as fly_ash.
+    const OLD: Record<string, string> = { fly_ash: 'Fly ash', ggbs: 'GGBS', alcofine: 'Alcofine', microsilica: 'Microsilica' }
+    const names = c.mineral_admixtures.map((m) => OLD[m] ?? m)
     add(names.join(', '), `mineral admixtures, ${names.join(' or ')}`)
   }
   if (c.sand_type) {
