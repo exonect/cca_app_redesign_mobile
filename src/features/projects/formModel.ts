@@ -58,7 +58,7 @@ export const projectSchema = z.object({
   cementitious_contents: z.array(z.number().int().min(100, 'Enter whole numbers from 100 to 999 kg/m³.').max(999, 'Enter whole numbers from 100 to 999 kg/m³.'))
     .max(CEMENTITIOUS_MAX, `Enter up to ${CEMENTITIOUS_MAX} cementitious contents.`)
     .refine((xs) => new Set(xs).size === xs.length, 'Each cementitious content can be entered once.'),
-  requirement_type: z.enum(['', 'slump', 'flow']),
+  requirement_type: z.enum(['', 'slump', 'flow', 'flow_slump']),
 })
 export type ProjectFormValues = z.infer<typeof projectSchema>
 export type FormField = keyof ProjectFormValues

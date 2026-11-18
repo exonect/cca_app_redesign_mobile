@@ -9,6 +9,7 @@ import { errorMessage, statusOf } from '@/api/errors'
 import { useLookups } from '@/api/hooks'
 import { useAuth } from '@/auth/AuthProvider'
 import { phoneFilter, potentialFilter, sfdcFilter } from '@/shared/inputFilters'
+import { REQUIREMENT_TYPES, workabilityNoun } from '@/shared/workability'
 import type { Project, Ref } from '@/shared/types'
 import { Banner, Body, Button, Card, Chips, ErrorState, Field, H1, Loading, MultiPicker, NumberField, Picker, Small, Strong, TextField } from '@/ui/kit'
 import { color, font, radius, TOUCH } from '@/ui/theme'
@@ -361,14 +362,14 @@ function TechnicalStep(p: StepProps) {
       <Section title="Workability and strength">
         <Field label="Requirement type" error={e.requirement_type}>
           <Chips label="Requirement type" single value={type ? [type] : []}
-            options={[{ value: 'slump' as const, label: 'Slump' }, { value: 'flow' as const, label: 'Flow' }]}
+            options={[...REQUIREMENT_TYPES]}
             onChange={(x) => set('requirement_type', x[0] ?? '')} />
         </Field>
         <LookupPicker {...p} name="slump_flow" label={type === 'flow' ? 'Target flow' : type === 'slump' ? 'Target slump' : 'Target slump or flow'} format={(s) => `${s} mm`} />
         <LookupPicker {...p} name="retention_time" label="Retention time" format={(s) => `${num(s, 1)} h`} />
         {target && hours ? (
           <View accessibilityLiveRegion="polite" style={{ backgroundColor: color.head, borderRadius: radius.field, padding: 10 }}>
-            <Body style={{ color: color.subtle }}>Trials will check {type === 'flow' ? 'flow' : 'slump'} at {target} ± 20 mm after {num(hours, 1)} h.</Body>
+            <Body style={{ color: color.subtle }}>Trials will check {workabilityNoun(type)} at {target} ± 20 mm after {num(hours, 1)} h.</Body>
           </View>
         ) : null}
         <LookupPicker {...p} name="strength_age" label="Strength requirement age" />

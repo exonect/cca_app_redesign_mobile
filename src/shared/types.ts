@@ -63,7 +63,7 @@ export type Project = ProjectListItem & {
   bulk_and_barrel: string | null; remarks: string
   cement_brands: Ref[]; cement_grades: Ref[]; mineral_admixtures: Ref[]; grades_of_concrete: Ref[]
   wc_ratios_ssd: Ref[]; compressive_strengths: Ref[]; wc_ratio_corrected: Ref | null; cementitious_contents: number[]
-  requirement_type: '' | 'slump' | 'flow'; retention_time: Ref | null; slump_flow: Ref | null; strength_age: Ref | null
+  requirement_type: '' | 'slump' | 'flow' | 'flow_slump'; retention_time: Ref | null; slump_flow: Ref | null; strength_age: Ref | null
   sand_type: Ref | null; fine_aggregate_source: Ref | null; coarse_aggregate_source: Ref | null; sand_zone: Ref | null
   admixture_base: Ref | null; created_at: string; created_by: Person | null; actions: ProjectActions
   /** Open data flags on this project (detail responses). */

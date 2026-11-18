@@ -7,6 +7,7 @@
 import { fieldErrors, fieldErrorsByPath } from '@/api/errors'
 import { AGES, AGGREGATES, analyse, isExtraMineral, isMineral, materialLabel, materialOrder, MATERIALS, mineralKey, SIEVE_LABEL, SIEVE_SETS } from '@/shared/calc'
 import type { FieldNote, Project, Trial } from '@/shared/types'
+import { defaultFreshTest } from '@/shared/workability'
 
 import { CAST_ERRORS, castIso, castParts, dayIso, isFutureDay, istToday } from './castAt'
 import { istDay, num, shortDate } from './format'
@@ -470,7 +471,7 @@ export function freshForm(t: Trial, project?: Project): FreshForm {
     return [key, Object.fromEntries(READING_MINUTES.map((m) => [m, saved[m] ?? '']))]
   })) as FreshForm['scc']
   return {
-    fresh_test: t.fresh_test || project?.requirement_type || 'slump',
+    fresh_test: t.fresh_test || defaultFreshTest(project?.requirement_type, project?.slump_flow?.value),
     readings: Object.fromEntries(READING_MINUTES.map((m) => [m, str(t.fresh_readings?.[m])])),
     fresh_density: str(t.fresh_density), site_temp: str(t.site_temp),
     bleeding: str(t.bleeding?.id), setting: str(t.setting?.id),
@@ -672,7 +673,7 @@ export function requirementTargets(p: Project | undefined) {
     retention: p?.retention_time && p.slump_flow && Number.isFinite(hours) && Number.isFinite(mm)
       ? { minutes: Math.round(hours * 60), hours: p.retention_time.value, mm } : null,
     strength: strengths.length ? { value: Math.min(...strengths), age: ageKey(p?.strength_age?.value) ?? '28d' } : null,
-    freshLabel: p?.requirement_type === 'flow' ? 'Flow' : 'Slump',
+    freshLabel: p?.requirement_type === 'flow' ? 'Flow' : p?.requirement_type === 'flow_slump' ? 'Slump or flow' : 'Slump',
   }
 }
 

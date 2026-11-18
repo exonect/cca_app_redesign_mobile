@@ -16,6 +16,7 @@ import { FlagBanner } from '@/features/flags/FlagBanner'
 import { TrialsExcelButton } from '@/features/trials/TrialsExcelButton'
 import type { Project, ProjectStatus, Ref, TrialListItem } from '@/shared/types'
 import type { ProjectWithFlags } from '@/shared/typesExt'
+import { requirementLabel } from '@/shared/workability'
 import { Body, Button, Card, EmptyState, ErrorState, H1, H2, Loading, OutcomeChip, PROJECT_STATUS_LABEL, ProjectStatusChip, Small, Strong, TrialStatusChip } from '@/ui/kit'
 import { color, font, radius, TOUCH } from '@/ui/theme'
 
@@ -219,7 +220,7 @@ function Facts({ rows }: { rows: [string, string][] }) {
 const list = (refs: Ref[], suffix = '') => refs.map((r) => `${r.value}${suffix}`).join(', ')
 
 function RequirementCard({ p }: { p: Project }) {
-  const kind = p.requirement_type === 'flow' ? 'Flow' : 'Slump'
+  const kind = requirementLabel(p.requirement_type) || 'Slump'
   const workability = p.slump_flow ? `${p.requirement_type === 'flow' ? 'Flow ' : ''}${p.slump_flow.value} mm${p.retention_time ? ` at ${num(p.retention_time.value, 1)} h` : ''}` : ''
   const strength = p.compressive_strengths.length ? `${list(p.compressive_strengths)} N/mm²${p.strength_age ? `, ${p.strength_age.value}` : ''}` : ''
   return (
