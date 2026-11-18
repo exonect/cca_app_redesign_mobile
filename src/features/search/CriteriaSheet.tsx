@@ -2,7 +2,7 @@ import { useState, type ReactNode } from 'react'
 import { Pressable, Text, View } from 'react-native'
 
 import { useLookups } from '@/api/hooks'
-import { Banner, Button, Chips, Field, H2, MultiPicker, NumberField, Picker, Small, TextField } from '@/ui/kit'
+import { Banner, Button, Chips, Field, H2, MultiPicker, Picker, Small, TextField } from '@/ui/kit'
 import { color, font } from '@/ui/theme'
 
 import { Sheet } from '@/features/projects/Sheet'
@@ -44,7 +44,7 @@ function Body_({ open, initial, onClose, onApply, serverErrors }: Props) {
   const slumpN = Number(c.slump)
   const slumpHint = c.slump.trim() && Number.isFinite(slumpN) && c.retention_minutes !== ''
     ? `Matches ${Math.max(0, slumpN - SLUMP_TOL)} to ${slumpN + SLUMP_TOL} mm at ${minutesLabel(c.retention_minutes).toLowerCase()}.`
-    : 'Enter a slump and when it is measured. Both are needed.'
+    : 'Choose a slump and when it is measured. Both are needed.'
   const ageLabel = STRENGTH_AGES.find((a) => a.value === c.strength_age)?.label
   const strengthHint = rangeHint('strength', c.strength)
   const errorCount = Object.values(errors).filter(Boolean).length
@@ -89,9 +89,7 @@ function Body_({ open, initial, onClose, onApply, serverErrors }: Props) {
       <Group title="Slump retention" note="±20 mm">
         <View style={{ flexDirection: 'row', gap: 10 }}>
           <View style={{ flex: 1 }}>
-            <Field label="Slump" error={errors.slump}>
-              <NumberField accessibilityLabel="Slump, mm" unit="mm" invalid={Boolean(errors.slump)} value={c.slump} onChangeText={(t) => set('slump', t)} />
-            </Field>
+            <SlumpPicker value={c.slump} error={errors.slump} onChange={(v) => set('slump', v)} />
           </View>
           <View style={{ flex: 1 }}>
             <Field label="Retained at" error={errors.retention_minutes}>
@@ -195,6 +193,27 @@ function StrengthPicker({ value, error, onChange }: { value: string[]; error?: s
     <Field label="Strength" error={error} hint={q.isError ? 'This list could not be loaded. Close and open the criteria again.' : undefined}>
       <MultiPicker label="Strength" placeholder="Choose strengths" loading={q.isLoading} value={chosen} onChange={onChange}
         invalid={Boolean(error)} options={[...listed, ...extra].map((n) => ({ value: n, label: `${n} N/mm²` }))} />
+    </Field>
+  )
+}
+
+/**
+ * Slump (UAT, 18 Nov 2026): one value from the Slump Flow master list, the legacy search's "Slump/Flow (mm)"
+ * dropdown and the same list as the project form. Only numbers can match a reading, so other entries are left
+ * out; "150.0" from a project is the listed "150", and a value not on the list stays shown.
+ */
+function SlumpPicker({ value, error, onChange }: { value: string; error?: string; onChange: (v: string) => void }) {
+  const q = useLookups('slump_flow')
+  const names = (q.data ?? []).map((l) => l.value.trim()).filter((v) => NUMERIC.test(v))
+  const listed = [...new Set(names)].sort((a, b) => Number(a) - Number(b))
+  const v = value.trim()
+  const chosen = v ? listed.find((n) => Number(n) === Number(v)) ?? v : ''
+  const options = chosen && !listed.includes(chosen) ? [...listed, chosen] : listed
+  return (
+    <Field label="Slump" error={error} hint={q.isError ? 'This list could not be loaded. Close and open the criteria again.' : undefined}>
+      <Picker label="Slump, mm" value={chosen || null} invalid={Boolean(error)} disabled={q.isLoading}
+        placeholder={q.isLoading ? 'Loading…' : 'Choose'}
+        options={options.map((n) => ({ value: n, label: `${n} mm` }))} onChange={(x) => onChange(x ?? '')} />
     </Field>
   )
 }

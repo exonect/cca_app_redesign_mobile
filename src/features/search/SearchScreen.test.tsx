@@ -189,3 +189,33 @@ describe('strength criterion (UAT, 18 Nov 2026: compressive strength master list
     qc.clear()
   })
 })
+
+describe('slump criterion (UAT, 18 Nov 2026: Slump Flow master list dropdown, as the old app)', () => {
+  beforeEach(() => mockApi.mockReset())
+
+  it('offers only the numbers on the list, ascending, and searches with the one chosen', async () => {
+    mockApi.mockImplementation(async (path: string, opts?: { query?: { category?: string } }) => {
+      if (path === '/lookups/' && opts?.query?.category === 'slump_flow') {
+        return ['180', '160', '70', 'Collapse'].map((value, i) => ({ id: 60 + i, category: 'slump_flow', value }))
+      }
+      if (path === '/lookups/') return []
+      if (path === '/search/') return { criteria: {}, products: 0, trials: 0, results: [] }
+      throw new Error(`unexpected ${path}`)
+    })
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } })
+    await render(<QueryClientProvider client={qc}><SearchScreen /></QueryClientProvider>)
+    await fireEvent.press(screen.getByRole('button', { name: 'Edit criteria' }))
+    const field = await screen.findByRole('button', { name: 'Slump, mm: not chosen' })
+    await waitFor(() => expect(field.props.accessibilityState?.disabled).toBeFalsy())
+    await fireEvent.press(field)
+    expect(screen.queryByText('Collapse mm')).toBeNull()
+    expect(screen.getByText('70 mm')).toBeTruthy()
+    await fireEvent.press(screen.getByText('160 mm'))
+    await fireEvent.press(screen.getByRole('button', { name: 'Retained at: not chosen' }))
+    await fireEvent.press(screen.getByText('2 h'))
+    expect(screen.getByText('Matches 140 to 180 mm at 2 h.')).toBeTruthy()
+    await fireEvent.press(screen.getByRole('button', { name: 'Search products' }))
+    await waitFor(() => expect(mockApi).toHaveBeenCalledWith('/search/', { method: 'POST', body: { slump: '160', retention_minutes: 120 } }))
+    qc.clear()
+  })
+})
