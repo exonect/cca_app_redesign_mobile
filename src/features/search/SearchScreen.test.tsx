@@ -219,3 +219,39 @@ describe('slump criterion (UAT, 18 Nov 2026: Slump Flow master list dropdown, as
     qc.clear()
   })
 })
+
+describe('W/C criteria (UAT, 18 Nov 2026: the legacy search\'s W/C ratio SSD and W/C ratio corrected dropdowns)', () => {
+  beforeEach(() => mockApi.mockReset())
+
+  it('offers each master list, numbers only and ascending, and searches with both', async () => {
+    mockApi.mockImplementation(async (path: string, opts?: { query?: { category?: string } }) => {
+      const cat = opts?.query?.category
+      if (path === '/lookups/' && (cat === 'wc_ratio_ssd' || cat === 'wc_ratio_corrected')) {
+        return ['0.40', '0.38', '0.37', 'NA'].map((value, i) => ({ id: 80 + i, category: cat, value }))
+      }
+      if (path === '/lookups/') return []
+      if (path === '/search/') return { criteria: {}, products: 0, trials: 0, results: [] }
+      throw new Error(`unexpected ${path}`)
+    })
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } })
+    await render(<QueryClientProvider client={qc}><SearchScreen /></QueryClientProvider>)
+    await fireEvent.press(screen.getByRole('button', { name: 'Edit criteria' }))
+    const ssd = await screen.findByRole('button', { name: /^W\/C ratio, SSD: none chosen/ })
+    await waitFor(() => expect(ssd.props.accessibilityState?.disabled).toBeFalsy())
+    await fireEvent.press(ssd)
+    expect(screen.getAllByRole('checkbox').map((c) => c.props.accessibilityLabel)).toEqual(['0.37', '0.38', '0.40'])
+    await fireEvent.press(screen.getByRole('checkbox', { name: '0.38' }))
+    await fireEvent.press(screen.getByRole('button', { name: 'Done' }))
+    expect(screen.getByText('Matches a free W/C (SSD) of 0.36 to 0.4.')).toBeTruthy()
+
+    const corrected = screen.getByRole('button', { name: 'W/C ratio, corrected: Any W/C ratio' })
+    await waitFor(() => expect(corrected.props.accessibilityState?.disabled).toBeFalsy())
+    await fireEvent.press(corrected)
+    expect(screen.queryByText('NA')).toBeNull()
+    await fireEvent.press(screen.getByText('0.37'))
+    expect(screen.getByText(/Matches a corrected W\/C of 0.35 to 0.39\. CCA trials only/)).toBeTruthy()
+    await fireEvent.press(screen.getByRole('button', { name: 'Search products' }))
+    await waitFor(() => expect(mockApi).toHaveBeenCalledWith('/search/', { method: 'POST', body: { wc: ['0.38'], wc_corrected: '0.37' } }))
+    qc.clear()
+  })
+})

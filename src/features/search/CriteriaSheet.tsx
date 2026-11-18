@@ -67,9 +67,13 @@ function Body_({ open, initial, onClose, onApply, serverErrors }: Props) {
 
       <Group title="Concrete">
         <LookupMulti category="grade_of_concrete" label="Grade of concrete" noun="grade" value={c.grade_of_concrete} error={errors.grade_of_concrete} onChange={(v) => set('grade_of_concrete', v)} />
-        <Field label="Free W/C, SSD, ±0.02" error={errors.wc} hint={rangeHint('wc', c.wc) ? `Matches ${rangeHint('wc', c.wc)}.` : 'Separate several values with commas.'}>
-          <TextField accessibilityLabel="Free W/C, SSD" keyboardType="numbers-and-punctuation" invalid={Boolean(errors.wc)} value={c.wc} onChangeText={(t) => set('wc', t)} />
-        </Field>
+        {/* UAT, 18 Nov 2026: both W/C dropdowns of the legacy search, from their master lists. */}
+        <NumberMulti category="wc_ratio_ssd" label="W/C ratio, SSD" field="W/C ratio, SSD, ±0.02" noun="W/C ratios"
+          hint={rangeHint('wc', c.wc) ? `Matches a free W/C (SSD) of ${rangeHint('wc', c.wc)}.` : 'The free W/C of the mix design, saturated surface dry.'}
+          value={splitNumbers(c.wc)} error={errors.wc} onChange={(v) => set('wc', v.join(', '))} />
+        <NumberPick category="wc_ratio_corrected" label="W/C ratio, corrected" field="W/C ratio, corrected, ±0.02" any="Any W/C ratio"
+          hint={`${rangeHint('wc', c.wc_corrected) ? `Matches a corrected W/C of ${rangeHint('wc', c.wc_corrected)}. ` : 'After the moisture and absorption correction. '}CCA trials only: imported history has no corrected ratio.`}
+          value={c.wc_corrected} error={errors.wc_corrected} onChange={(v) => set('wc_corrected', v)} />
         <Field label="Cementitious content, ±50 kg/m³" error={errors.cementitious}
           hint={rangeHint('cementitious', c.cementitious) ? `Matches ${rangeHint('cementitious', c.cementitious)}.` : 'Cement plus mineral admixtures.'}>
           <TextField accessibilityLabel="Cementitious content, kg per cubic metre" keyboardType="numbers-and-punctuation" unit="kg/m³"
@@ -177,43 +181,57 @@ function MineralPicker({ value, onChange }: { value: string[]; onChange: (v: str
 }
 
 const NUMERIC = /^[+]?(\d+\.?\d*|\.\d+)$/
+const LIST_FAILED = 'This list could not be loaded. Close and open the criteria again.'
 
-/**
- * Strength (UAT, 18 Nov 2026): a multi select over the Compressive Strength master list, the legacy search's
- * "Compressive Strength (MPA)" dropdown and the same list as the project form. Only numbers can match an
- * average strength, so other entries are left out; "30.0" from a project is the listed "30".
- */
-function StrengthPicker({ value, error, onChange }: { value: string[]; error?: string; onChange: (v: string[]) => void }) {
-  const q = useLookups('compressive_strength')
+/** A numeric master list, ascending; entries that are not numbers cannot match a value, so they are left out. */
+function useNumberList(category: string) {
+  const q = useLookups(category)
   const names = (q.data ?? []).map((l) => l.value.trim()).filter((v) => NUMERIC.test(v))
-  const listed = [...new Set(names)].sort((a, b) => Number(a) - Number(b))
-  const chosen = [...new Set(value.map((v) => listed.find((n) => Number(n) === Number(v)) ?? v))]
+  return { q, listed: [...new Set(names)].sort((a, b) => Number(a) - Number(b)) }
+}
+/** "30.0" from a project is the listed "30", so the list can untick or change it. */
+const asListed = (listed: string[], v: string) => listed.find((n) => Number(n) === Number(v)) ?? v
+const withUnit = (n: string, unit?: string) => (unit ? `${n} ${unit}` : n)
+
+/** Several values from a numeric master list (UAT, 18 Nov 2026: the legacy search's multi select dropdowns). */
+function NumberMulti({ category, label, field, noun, unit, hint, value, error, onChange }: {
+  category: string; label: string; field: string; noun: string; unit?: string; hint?: string
+  value: string[]; error?: string; onChange: (v: string[]) => void
+}) {
+  const { q, listed } = useNumberList(category)
+  const chosen = [...new Set(value.map((v) => asListed(listed, v)))]
   const extra = chosen.filter((v) => !listed.includes(v))
   return (
-    <Field label="Strength" error={error} hint={q.isError ? 'This list could not be loaded. Close and open the criteria again.' : undefined}>
-      <MultiPicker label="Strength" placeholder="Choose strengths" loading={q.isLoading} value={chosen} onChange={onChange}
-        invalid={Boolean(error)} options={[...listed, ...extra].map((n) => ({ value: n, label: `${n} N/mm²` }))} />
+    <Field label={field} error={error} hint={q.isError ? LIST_FAILED : hint}>
+      <MultiPicker label={label} placeholder={`Choose ${noun}`} loading={q.isLoading} value={chosen} onChange={onChange}
+        invalid={Boolean(error)} options={[...listed, ...extra].map((n) => ({ value: n, label: withUnit(n, unit) }))} />
     </Field>
   )
 }
 
-/**
- * Slump (UAT, 18 Nov 2026): one value from the Slump Flow master list, the legacy search's "Slump/Flow (mm)"
- * dropdown and the same list as the project form. Only numbers can match a reading, so other entries are left
- * out; "150.0" from a project is the listed "150", and a value not on the list stays shown.
- */
-function SlumpPicker({ value, error, onChange }: { value: string; error?: string; onChange: (v: string) => void }) {
-  const q = useLookups('slump_flow')
-  const names = (q.data ?? []).map((l) => l.value.trim()).filter((v) => NUMERIC.test(v))
-  const listed = [...new Set(names)].sort((a, b) => Number(a) - Number(b))
+/** One value from a numeric master list (UAT, 18 Nov 2026: the legacy search's single select dropdowns).
+ * With `any`, a first option clears the choice. */
+function NumberPick({ category, label, field, unit, any, hint, value, error, onChange }: {
+  category: string; label: string; field: string; unit?: string; any?: string; hint?: string
+  value: string; error?: string; onChange: (v: string) => void
+}) {
+  const { q, listed } = useNumberList(category)
   const v = value.trim()
-  const chosen = v ? listed.find((n) => Number(n) === Number(v)) ?? v : ''
-  const options = chosen && !listed.includes(chosen) ? [...listed, chosen] : listed
+  const chosen = v ? asListed(listed, v) : ''
+  const values = chosen && !listed.includes(chosen) ? [...listed, chosen] : listed
+  const options = [...(any ? [{ value: '', label: any }] : []), ...values.map((n) => ({ value: n, label: withUnit(n, unit) }))]
   return (
-    <Field label="Slump" error={error} hint={q.isError ? 'This list could not be loaded. Close and open the criteria again.' : undefined}>
-      <Picker label="Slump, mm" value={chosen || null} invalid={Boolean(error)} disabled={q.isLoading}
-        placeholder={q.isLoading ? 'Loading…' : 'Choose'}
-        options={options.map((n) => ({ value: n, label: `${n} mm` }))} onChange={(x) => onChange(x ?? '')} />
+    <Field label={field} error={error} hint={q.isError ? LIST_FAILED : hint}>
+      <Picker label={label} value={any ? chosen : chosen || null} invalid={Boolean(error)} disabled={q.isLoading}
+        placeholder={q.isLoading ? 'Loading…' : 'Choose'} options={options} onChange={(x) => onChange(x ?? '')} />
     </Field>
   )
 }
+
+/** Strength: the Compressive Strength master list, as the legacy "Compressive Strength (MPA)" dropdown. */
+const StrengthPicker = (p: { value: string[]; error?: string; onChange: (v: string[]) => void }) =>
+  <NumberMulti {...p} category="compressive_strength" label="Strength" field="Strength" noun="strengths" unit="N/mm²" />
+
+/** Slump: the Slump Flow master list, as the legacy "Slump/Flow (mm)" dropdown. */
+const SlumpPicker = (p: { value: string; error?: string; onChange: (v: string) => void }) =>
+  <NumberPick {...p} category="slump_flow" label="Slump, mm" field="Slump" unit="mm" />

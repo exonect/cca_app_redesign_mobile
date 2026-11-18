@@ -17,7 +17,7 @@ export const LIST_KEYS = [
   'fine_aggregate_source', 'coarse_aggregate_source',
 ] as const
 /** `sieve` holds the sieve analysis table as JSON text (see SieveInput), as on the web. */
-export const TEXT_KEYS = ['wc', 'cementitious', 'sand_type', 'slump', 'retention_minutes', 'strength_age', 'strength', 'family', 'sieve'] as const
+export const TEXT_KEYS = ['wc', 'wc_corrected', 'cementitious', 'sand_type', 'slump', 'retention_minutes', 'strength_age', 'strength', 'family', 'sieve'] as const
 
 type ListKey = (typeof LIST_KEYS)[number]
 type TextKey = (typeof TEXT_KEYS)[number]
@@ -79,6 +79,7 @@ export function toRequest(c: Criteria): SearchRequest {
   for (const k of LIST_KEYS) if (c[k].length) out[k] = [...c[k]]
   const wc = splitNumbers(c.wc)
   if (wc.length) out.wc = wc
+  if (c.wc_corrected.trim()) out.wc_corrected = c.wc_corrected.trim()
   const cem = splitNumbers(c.cementitious)
   if (cem.length) out.cementitious = cem
   if (c.sand_type) out.sand_type = c.sand_type
@@ -140,6 +141,8 @@ export function validate(c: Criteria): Errors {
     const msg = numberError(c[k])
     if (msg) e[k] = msg
   }
+  const corrected = c.wc_corrected.trim()
+  if (corrected && (!NUMBER.test(corrected) || Number(corrected) < 0 || Number(corrected) > 5)) e.wc_corrected = 'Choose a W/C ratio from the list.'
   const slump = c.slump.trim()
   if (slump && (!NUMBER.test(slump) || !Number.isFinite(Number(slump)))) e.slump = 'Enter the slump in mm, as a number.'
   else if (slump && (Number(slump) < 0 || Number(slump) > SLUMP_MAX)) e.slump = `Enter a slump or flow from 0 to ${SLUMP_MAX} mm.`
@@ -219,6 +222,7 @@ export function criteriaChips(c: Criteria): { text: string; label: string }[] {
   if (c.cement_brand.length) add(c.cement_brand.join(', '), `cement brand, ${c.cement_brand.join(' or ')}`)
   const wc = splitNumbers(c.wc)
   if (wc.length) add(`W/C ${wc.join(', ')} ±${WC_TOL}`, `free W/C, ${wc.join(' or ')} plus or minus ${WC_TOL}`)
+  if (c.wc_corrected.trim()) add(`W/C corrected ${c.wc_corrected.trim()} ±${WC_TOL}`, `corrected W/C, ${c.wc_corrected.trim()} plus or minus ${WC_TOL}`)
   if (c.slump.trim() && c.retention_minutes !== '') {
     const at = minutesLabel(c.retention_minutes)
     add(`Slump ${c.slump.trim()} ±${SLUMP_TOL} ${Number(c.retention_minutes) ? `at ${at}` : 'initial'}`, `slump, ${c.slump.trim()} plus or minus ${SLUMP_TOL} millimetres, ${at.toLowerCase()}`)
