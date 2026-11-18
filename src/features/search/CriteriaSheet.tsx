@@ -8,7 +8,7 @@ import { color, font } from '@/ui/theme'
 import { Sheet } from '@/features/projects/Sheet'
 
 import {
-  emptyCriteria, FAMILIES, minutesLabel, rangeHint, RETENTION_MINUTES, SAND_TYPES, SLUMP_TOL, STRENGTH_AGES,
+  emptyCriteria, FAMILIES, minutesLabel, rangeHint, RETENTION_MINUTES, SAND_TYPES, SLUMP_TOL, splitNumbers, STRENGTH_AGES,
   validate, type Criteria, type Errors, type ServerErrors,
 } from './criteria'
 import { SieveSection } from './SieveSection'
@@ -105,21 +105,12 @@ function Body_({ open, initial, onClose, onApply, serverErrors }: Props) {
       </Group>
 
       <Group title="Strength" note="0 to +5 N/mm²">
-        <View style={{ flexDirection: 'row', gap: 10 }}>
-          <View style={{ flex: 1 }}>
-            <Field label="Age" error={errors.strength_age}>
-              <Picker label="Strength age" value={c.strength_age || null} options={STRENGTH_AGES} invalid={Boolean(errors.strength_age)}
-                onChange={(v) => set('strength_age', v ?? '')} />
-            </Field>
-          </View>
-          <View style={{ flex: 1 }}>
-            <Field label="Strength" error={errors.strength}>
-              <TextField accessibilityLabel="Strength, newtons per square millimetre" keyboardType="numbers-and-punctuation" unit="N/mm²"
-                invalid={Boolean(errors.strength)} value={c.strength} onChangeText={(t) => set('strength', t)} />
-            </Field>
-          </View>
-        </View>
-        <Small>{strengthHint && ageLabel ? `Matches average ${ageLabel} strength of ${strengthHint}.` : 'Enter an age and a strength. Both are needed.'}</Small>
+        <Field label="Age" error={errors.strength_age}>
+          <Picker label="Strength age" value={c.strength_age || null} options={STRENGTH_AGES} invalid={Boolean(errors.strength_age)}
+            onChange={(v) => set('strength_age', v ?? '')} />
+        </Field>
+        <StrengthPicker value={splitNumbers(c.strength)} error={errors.strength} onChange={(v) => set('strength', v.join(', '))} />
+        <Small>{strengthHint && ageLabel ? `Matches average ${ageLabel} strength of ${strengthHint}.` : 'Choose an age and one or more strengths. Both are needed.'}</Small>
       </Group>
 
       <Group title="Product family">
@@ -183,6 +174,27 @@ function MineralPicker({ value, onChange }: { value: string[]; onChange: (v: str
     <Field label="Mineral admixtures, any used" hint={q.isError ? 'This list could not be loaded. Close and open the criteria again.' : 'Trials that used at least one of these.'}>
       <MultiPicker label="Mineral admixtures" placeholder="Any mineral admixture" loading={q.isLoading} value={value} onChange={onChange}
         options={[...names, ...extra].map((n) => ({ value: n, label: n }))} />
+    </Field>
+  )
+}
+
+const NUMERIC = /^[+]?(\d+\.?\d*|\.\d+)$/
+
+/**
+ * Strength (UAT, 18 Nov 2026): a multi select over the Compressive Strength master list, the legacy search's
+ * "Compressive Strength (MPA)" dropdown and the same list as the project form. Only numbers can match an
+ * average strength, so other entries are left out; "30.0" from a project is the listed "30".
+ */
+function StrengthPicker({ value, error, onChange }: { value: string[]; error?: string; onChange: (v: string[]) => void }) {
+  const q = useLookups('compressive_strength')
+  const names = (q.data ?? []).map((l) => l.value.trim()).filter((v) => NUMERIC.test(v))
+  const listed = [...new Set(names)].sort((a, b) => Number(a) - Number(b))
+  const chosen = [...new Set(value.map((v) => listed.find((n) => Number(n) === Number(v)) ?? v))]
+  const extra = chosen.filter((v) => !listed.includes(v))
+  return (
+    <Field label="Strength" error={error} hint={q.isError ? 'This list could not be loaded. Close and open the criteria again.' : undefined}>
+      <MultiPicker label="Strength" placeholder="Choose strengths" loading={q.isLoading} value={chosen} onChange={onChange}
+        invalid={Boolean(error)} options={[...listed, ...extra].map((n) => ({ value: n, label: `${n} N/mm²` }))} />
     </Field>
   )
 }

@@ -144,6 +144,7 @@ describe('mineral admixtures criterion (UAT, 17 Nov 2026: master list dropdown, 
     await render(<QueryClientProvider client={qc}><SearchScreen /></QueryClientProvider>)
     await fireEvent.press(screen.getByRole('button', { name: 'Edit criteria' }))
     const field = await screen.findByRole('button', { name: /^Mineral admixtures: none chosen/ })
+    await waitFor(() => expect(field.props.accessibilityState?.disabled).toBeFalsy())
     await fireEvent.press(field)
     expect(screen.getAllByRole('checkbox').map((c) => c.props.accessibilityLabel)).toEqual(['ALCOFINE', 'CRYSTALLINE', 'FLYASH', 'GGBS', 'METAKOALIN'])
     await fireEvent.changeText(screen.getByLabelText('Search Mineral admixtures'), 'meta')
@@ -154,6 +155,37 @@ describe('mineral admixtures criterion (UAT, 17 Nov 2026: master list dropdown, 
     await fireEvent.press(screen.getByRole('button', { name: 'Search products' }))
     await waitFor(() => expect(mockApi).toHaveBeenCalledWith('/search/', { method: 'POST', body: { mineral_admixtures: ['METAKOALIN', 'GGBS'] } }))
     expect(await screen.findByText('METAKOALIN, GGBS')).toBeTruthy()
+    qc.clear()
+  })
+})
+
+describe('strength criterion (UAT, 18 Nov 2026: compressive strength master list dropdown, as the old app)', () => {
+  beforeEach(() => mockApi.mockReset())
+
+  it('offers only the numbers on the list, ascending, and searches with several', async () => {
+    mockApi.mockImplementation(async (path: string, opts?: { query?: { category?: string } }) => {
+      if (path === '/lookups/' && opts?.query?.category === 'compressive_strength') {
+        return ['20', '10', '15', 'M30'].map((value, i) => ({ id: 40 + i, category: 'compressive_strength', value }))
+      }
+      if (path === '/lookups/') return []
+      if (path === '/search/') return { criteria: {}, products: 0, trials: 0, results: [] }
+      throw new Error(`unexpected ${path}`)
+    })
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } })
+    await render(<QueryClientProvider client={qc}><SearchScreen /></QueryClientProvider>)
+    await fireEvent.press(screen.getByRole('button', { name: 'Edit criteria' }))
+    await fireEvent.press(screen.getByRole('button', { name: 'Strength age: not chosen' }))
+    await fireEvent.press(screen.getByText('5 days'))
+    const field = await screen.findByRole('button', { name: /^Strength: none chosen/ })
+    await waitFor(() => expect(field.props.accessibilityState?.disabled).toBeFalsy())
+    await fireEvent.press(field)
+    expect(screen.getAllByRole('checkbox').map((c) => c.props.accessibilityLabel)).toEqual(['10 N/mm²', '15 N/mm²', '20 N/mm²'])
+    await fireEvent.press(screen.getByRole('checkbox', { name: '10 N/mm²' }))
+    await fireEvent.press(screen.getByRole('checkbox', { name: '20 N/mm²' }))
+    await fireEvent.press(screen.getByRole('button', { name: 'Done' }))
+    expect(screen.getByText('Matches average 5 days strength of 10 to 15 N/mm², or 20 to 25 N/mm².')).toBeTruthy()
+    await fireEvent.press(screen.getByRole('button', { name: 'Search products' }))
+    await waitFor(() => expect(mockApi).toHaveBeenCalledWith('/search/', { method: 'POST', body: { strength_age: '5d', strength: ['10', '20'] } }))
     qc.clear()
   })
 })
