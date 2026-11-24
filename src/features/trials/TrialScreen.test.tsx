@@ -332,6 +332,24 @@ describe('closing', () => {
     expect(await screen.findByText('Conclusion changed to met expectation.')).toBeTruthy()
   })
 
+  it('saves the conclusion while the trial stays open, as the old app (UAT, 24 Nov 2026)', async () => {
+    const bodies: Record<string, unknown>[] = []
+    const t = makeTrial({ remarks: '', actions: { edit: false, start: false, close: true, edit_cubes: true, delete: false, attach: true, change_conclusion: true } })
+    serve(t, (path, opts) => {
+      if (path !== '/trials/t-1/conclusion/') return undefined
+      bodies.push(opts!.body!)
+      return { ...t, outcome: 'met', outcome_label: 'Met expectation', remarks: 'Good 7 day' }
+    })
+    await open(5)
+    expect(await screen.findByText(/^Not saved yet\./)).toBeTruthy()
+    await fireEvent.press(screen.getByRole('radio', { name: 'Met expectation' }))
+    await fireEvent.changeText(screen.getByLabelText('Remarks'), 'Good 7 day')
+    await fireEvent.press(screen.getByRole('button', { name: 'Save conclusion' }))
+    await waitFor(() => expect(bodies).toEqual([{ outcome: 'met', remarks: 'Good 7 day' }]))
+    expect(await screen.findByText('Conclusion saved: met expectation. The trial stays open until it is closed.')).toBeTruthy()
+    expect(screen.getByText(/^Saved as met expectation\./)).toBeTruthy()
+  })
+
   it('keeps the Sales Person signatory from the project and read only (T-62)', async () => {
     serve(makeTrial({ status: 'draft', code: null, actions: { edit: true, start: true, close: false, edit_cubes: true, delete: false, attach: true } }))
     await open(5)

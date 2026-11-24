@@ -40,6 +40,8 @@ export function ConclusionStep({ readOnly, banners }: { readOnly: boolean; banne
   // Legacy "Update Cube": an Admin or Sales Admin can change the conclusion and remarks of a closed trial.
   const [revising, setRevising] = useState(false)
   const choosing = closing || revising
+  // UAT, 24 Nov 2026 (legacy): the conclusion is saved while the trial stays open, so lists show it.
+  const savingOpen = trial.status === 'in_progress' && trial.actions.change_conclusion
   const online = useOnline()
   const synced = useTrialOps(trial.id).length === 0
 
@@ -117,16 +119,17 @@ export function ConclusionStep({ readOnly, banners }: { readOnly: boolean; banne
     setOutcomeError(null)
     if (!outcome) { setOutcomeError('Choose met or below expectation.'); return }
     if (form.remarks.trim().length > REMARKS_MAX) { notify({ tone: 'error', text: `Remarks: use ${REMARKS_MAX} characters or fewer.` }); return }
-    if (!online) { notify({ tone: 'error', text: 'Changing the conclusion needs a connection. Try again when you are back online.' }); return }
+    if (!online) { notify({ tone: 'error', text: 'Saving the conclusion needs a connection. Try again when you are back online.' }); return }
     try {
       const t = await revise.mutateAsync()
       accept(t)
       setRevising(false)
-      notify({ tone: 'ok', text: `Conclusion changed to ${t.outcome_label.toLowerCase()}.` })
+      notify({ tone: 'ok', text: t.status === 'in_progress' ? `Conclusion saved: ${t.outcome_label.toLowerCase()}. The trial stays open until it is closed.`
+        : `Conclusion changed to ${t.outcome_label.toLowerCase()}.` })
     } catch (e) {
       const f = fieldErrors(e)
       if (f.outcome) setOutcomeError(f.outcome)
-      notify({ tone: 'error', text: f.outcome ?? errorMessage(e, 'The conclusion was not changed. Try again.') })
+      notify({ tone: 'error', text: f.outcome ?? errorMessage(e, 'The conclusion was not saved. Try again.') })
       reload(e)
     }
   }
@@ -192,7 +195,7 @@ export function ConclusionStep({ readOnly, banners }: { readOnly: boolean; banne
           ) : null}
         </Section>
       ) : (
-        <View accessibilityRole="radiogroup" accessibilityLabel="Trial conclusion, required" style={{ gap: 8 }}>
+        <View accessibilityRole="radiogroup" accessibilityLabel={trial.status === 'closed' ? 'Trial conclusion, required' : 'Trial conclusion, required to close'} style={{ gap: 8 }}>
           <Text style={{ fontFamily: font.semibold, fontSize: 15, color: color.ink }}>Trial conclusion</Text>
           <View style={{ flexDirection: 'row', gap: 10 }}>
             <RadioCard title="Met expectation" body="Can be offered to the customer." selected={outcome === 'met'} disabled={!choosing}
@@ -210,6 +213,12 @@ export function ConclusionStep({ readOnly, banners }: { readOnly: boolean; banne
           invalid={!!errors.remarks} onChangeText={(v) => setForm((f) => ({ ...f, remarks: v }))}
           style={{ minHeight: 72, textAlignVertical: 'top', fontFamily: font.regular }} />
       </Field>
+      {savingOpen ? (
+        <View style={{ gap: 6 }}>
+          <Button title="Save conclusion" busy={revise.isPending} onPress={saveConclusion} style={{ alignSelf: 'flex-start', flexGrow: 0 }} />
+          <Small>{`${trial.outcome ? `Saved as ${trial.outcome_label.toLowerCase()}. ` : 'Not saved yet. '}Saves the conclusion and remarks; lists show it straight away. The trial stays open until it is closed.`}</Small>
+        </View>
+      ) : null}
 
       <Section title="Signatures">
         {SIGNATORIES.map((s) => (

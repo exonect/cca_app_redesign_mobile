@@ -278,9 +278,11 @@ function TrialRow({ t, n }: { t: TrialListItem; n: number }) {
     ? [t.cast_at ? `Cast ${shortDate(t.cast_at)}` : null, t.strength_28d ? `28 d at ${num(t.strength_28d)} N/mm²` : null].filter(Boolean).join(', ')
     : [t.cast_at ? `Cast ${shortDate(t.cast_at)}` : `Created ${shortDate(t.created_at)}`, t.grade].filter(Boolean).join(', ')
   let chip: ReactNode = <TrialStatusChip status={t.status} />
-  if (t.status === 'closed') chip = <OutcomeChip outcome={t.outcome} />
+  // The outcome shows once saved, open or closed (UAT, 24 Nov 2026); the number tile marks an open trial.
+  if (t.status === 'closed' || t.outcome) chip = <OutcomeChip outcome={t.outcome} />
+  const said = t.status === 'closed' ? t.outcome_label || 'Not concluded' : [t.status_label, t.outcome_label].filter(Boolean).join(', ')
   return (
-    <Pressable accessibilityRole="link" accessibilityLabel={`Trial ${n}, ${t.code ?? 'draft'}. ${t.product ?? 'No product yet'}. ${detail}. ${t.status === 'closed' ? t.outcome_label || 'Not concluded' : t.status_label}`}
+    <Pressable accessibilityRole="link" accessibilityLabel={`Trial ${n}, ${t.code ?? 'draft'}. ${t.product ?? 'No product yet'}. ${detail}. ${said}`}
       onPress={() => router.push(`/trial/${t.id}`)}
       style={({ pressed }) => ({ flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14, paddingVertical: 12, borderRadius: radius.card, borderWidth: 1, borderColor: color.line, backgroundColor: pressed ? color.head : color.surface })}>
       <View style={{ width: 36, height: 36, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: open ? color.link : color.status.draft.bg }}>
