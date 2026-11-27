@@ -30,9 +30,28 @@ export const SLUMP_TOL = 20
 export const STRENGTH_UP = 5
 export const CEMENTITIOUS_TOL = 50
 
-export const SAND_TYPES = [
-  { value: '', label: 'Any sand' }, { value: 'river', label: 'River sand' }, { value: 'crushed', label: 'Crushed sand' }, { value: 'both', label: 'River or crushed' },
-]
+/** Sand type (UAT, 27 Nov 2026): a name from the Sand Type master list, as the legacy dropdown. Older search
+ * links sent one of these keys, still understood. */
+export const OLD_SAND_KEYS: Record<string, string> = { river: 'River sand', crushed: 'Crushed sand', both: 'River or crushed' }
+
+/** What the mix must have used, by the words in the name as the legacy search; M sand (manufactured) is crushed.
+ * The same rule is on the server (search.service._sand_key). */
+export function sandKey(name: string): '' | 'river' | 'crushed' | 'both' {
+  if (name === 'river' || name === 'crushed' || name === 'both') return name
+  const v = name.split(/\s+/).join(' ').toLowerCase()
+  const river = v.includes('river')
+  const crushed = v.includes('crush') || v.includes('m sand') || v.includes('manufactured')
+  return river && crushed ? 'both' : river ? 'river' : crushed ? 'crushed' : ''
+}
+
+export function sandHint(name: string): string | undefined {
+  if (!name) return undefined
+  const k = sandKey(name)
+  if (k === 'river') return 'Trials whose mix used river sand.'
+  if (k === 'both') return 'Trials whose mix used river or crushed sand.'
+  if (k === 'crushed') return /m sand|manufactured/i.test(name) ? 'Trials whose mix used crushed sand; M sand counts as crushed.' : 'Trials whose mix used crushed sand.'
+  return 'Trials record only river and crushed sand, so this type does not narrow the results.'
+}
 export const FAMILIES = [
   { value: '', label: 'Any' }, { value: 'neutrol', label: 'Neutrol' }, { value: 'tecnos', label: 'Tecnos' }, { value: 'plastard', label: 'Plastard' },
 ]
@@ -245,7 +264,7 @@ export function criteriaChips(c: Criteria): { text: string; label: string }[] {
     add(names.join(', '), `mineral admixtures, ${names.join(' or ')}`)
   }
   if (c.sand_type) {
-    const t = SAND_TYPES.find((s) => s.value === c.sand_type)?.label ?? c.sand_type
+    const t = OLD_SAND_KEYS[c.sand_type] ?? c.sand_type
     add(t, `sand type, ${t}`)
   }
   if (c.requirement_type) {

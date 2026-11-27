@@ -8,7 +8,7 @@ import { color, font } from '@/ui/theme'
 import { Sheet } from '@/features/projects/Sheet'
 
 import {
-  emptyCriteria, FAMILIES, minutesLabel, rangeHint, RETENTION_MINUTES, SAND_TYPES, SLUMP_TOL, splitNumbers, STRENGTH_AGES,
+  emptyCriteria, FAMILIES, minutesLabel, rangeHint, RETENTION_MINUTES, OLD_SAND_KEYS, sandHint, SLUMP_TOL, splitNumbers, STRENGTH_AGES,
   validate, type Criteria, type Errors, type ServerErrors,
 } from './criteria'
 import { SieveSection } from './SieveSection'
@@ -83,9 +83,7 @@ function Body_({ open, initial, onClose, onApply, serverErrors }: Props) {
       </Group>
 
       <Group title="Sand">
-        <Field label="Sand type">
-          <Picker label="Sand type" value={c.sand_type} options={SAND_TYPES} onChange={(v) => set('sand_type', v ?? '')} />
-        </Field>
+        <SandPicker value={c.sand_type} onChange={(v) => set('sand_type', v)} />
         <LookupMulti category="sand_zone" label="Sand zone" noun="sand zone" value={c.sand_zone} error={errors.sand_zone} onChange={(v) => set('sand_zone', v)} />
         <LookupMulti category="fine_aggregate_source" label="Fine aggregate source" noun="source" value={c.fine_aggregate_source} error={errors.fine_aggregate_source} onChange={(v) => set('fine_aggregate_source', v)} />
         <LookupMulti category="coarse_aggregate_source" label="Coarse aggregate source" noun="source" value={c.coarse_aggregate_source} error={errors.coarse_aggregate_source} onChange={(v) => set('coarse_aggregate_source', v)} />
@@ -242,3 +240,18 @@ const StrengthPicker = (p: { value: string[]; error?: string; onChange: (v: stri
 /** Slump: the Slump Flow master list, as the legacy "Slump/Flow (mm)" dropdown. */
 const SlumpPicker = (p: { value: string; error?: string; onChange: (v: string) => void }) =>
   <NumberPick {...p} category="slump_flow" label="Slump, mm" field="Slump" unit="mm" />
+
+/** Sand type: one name from the Sand Type master list, as the legacy search (UAT, 27 Nov 2026); the same list as
+ * the project form. A value not on the list (an older link's key, or a retired name) stays shown. */
+function SandPicker({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const q = useLookups('sand_type')
+  const names = [...new Set((q.data ?? []).map((l) => l.value.trim()).filter(Boolean))]
+  const values = value && !names.includes(value) ? [...names, value] : names
+  return (
+    <Field label="Sand type" hint={q.isError ? LIST_FAILED : sandHint(value)}>
+      <Picker label="Sand type" value={value} disabled={q.isLoading} placeholder={q.isLoading ? 'Loading…' : 'Any sand'}
+        options={[{ value: '', label: 'Any sand' }, ...values.map((n) => ({ value: n, label: OLD_SAND_KEYS[n] ?? n }))]}
+        onChange={(v) => onChange(v ?? '')} />
+    </Field>
+  )
+}

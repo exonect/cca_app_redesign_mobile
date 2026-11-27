@@ -278,3 +278,31 @@ describe('requirement type criterion (UAT, 27 Nov 2026: as the old app\'s search
     qc.clear()
   })
 })
+
+describe('sand type criterion (UAT, 27 Nov 2026: the Sand Type master list, as the old app)', () => {
+  beforeEach(() => mockApi.mockReset())
+
+  it('offers every master sand type and searches with the name', async () => {
+    mockApi.mockImplementation(async (path: string, opts?: { query?: { category?: string } }) => {
+      if (path === '/lookups/' && opts?.query?.category === 'sand_type') {
+        return ['CRUSHED SAND', 'DIVEGHAT - SASWAD', 'M SAND', 'RIVER SAND', 'RIVER SAND+CRUSHED SAND', 'SILICA SAND']
+          .map((value, i) => ({ id: 90 + i, category: 'sand_type', value }))
+      }
+      if (path === '/lookups/') return []
+      if (path === '/search/') return { criteria: {}, products: 0, trials: 0, results: [] }
+      throw new Error(`unexpected ${path}`)
+    })
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } })
+    await render(<QueryClientProvider client={qc}><SearchScreen /></QueryClientProvider>)
+    await fireEvent.press(screen.getByRole('button', { name: 'Edit criteria' }))
+    const field = await screen.findByRole('button', { name: 'Sand type: Any sand' })
+    await waitFor(() => expect(field.props.accessibilityState?.disabled).toBeFalsy())
+    await fireEvent.press(field)
+    for (const n of ['DIVEGHAT - SASWAD', 'M SAND', 'RIVER SAND+CRUSHED SAND']) expect(screen.getByText(n)).toBeTruthy()
+    await fireEvent.press(screen.getByText('SILICA SAND'))
+    expect(screen.getByText('Trials record only river and crushed sand, so this type does not narrow the results.')).toBeTruthy()
+    await fireEvent.press(screen.getByRole('button', { name: 'Search products' }))
+    await waitFor(() => expect(mockApi).toHaveBeenCalledWith('/search/', { method: 'POST', body: { sand_type: 'SILICA SAND' } }))
+    qc.clear()
+  })
+})
