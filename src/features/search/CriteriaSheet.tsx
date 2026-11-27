@@ -12,6 +12,7 @@ import {
   validate, type Criteria, type Errors, type ServerErrors,
 } from './criteria'
 import { SieveSection } from './SieveSection'
+import { REQUIREMENT_TYPES } from '@/shared/workability'
 
 type Props = {
   open: boolean; initial: Criteria; onClose: () => void; onApply: (c: Criteria) => void
@@ -91,6 +92,12 @@ function Body_({ open, initial, onClose, onApply, serverErrors }: Props) {
       </Group>
 
       <Group title="Slump retention" note="±20 mm">
+        {/* UAT, 27 Nov 2026: the legacy search's "Requirement Type", which it sent but did not filter on. */}
+        <Field label="Requirement type" hint={c.requirement_type === 'slump' ? 'Only trials measured as slump.' : c.requirement_type === 'flow'
+          ? 'Only trials measured as flow.' : c.requirement_type === 'flow_slump' ? 'Trials measured as slump or flow.' : undefined}>
+          <Picker label="Requirement type" value={c.requirement_type} onChange={(v) => set('requirement_type', v ?? '')}
+            options={[{ value: '', label: 'Any requirement type' }, ...REQUIREMENT_TYPES]} />
+        </Field>
         <View style={{ flexDirection: 'row', gap: 10 }}>
           <View style={{ flex: 1 }}>
             <SlumpPicker value={c.slump} error={errors.slump} onChange={(v) => set('slump', v)} />

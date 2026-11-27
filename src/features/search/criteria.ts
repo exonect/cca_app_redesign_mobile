@@ -4,6 +4,7 @@
  * the constants here only explain them. Same rules as the web criteria.ts.
  */
 import { AGES } from '@/shared/calc'
+import { requirementLabel } from '@/shared/workability'
 import {
   combinedGrading, emptySieve, GRADING_MATERIALS, GRADING_SIEVES, readSieve, sieveError, writeSieve, type SieveInput,
 } from '@/shared/searchCriteria'
@@ -17,7 +18,7 @@ export const LIST_KEYS = [
   'fine_aggregate_source', 'coarse_aggregate_source',
 ] as const
 /** `sieve` holds the sieve analysis table as JSON text (see SieveInput), as on the web. */
-export const TEXT_KEYS = ['wc', 'wc_corrected', 'cementitious', 'sand_type', 'slump', 'retention_minutes', 'strength_age', 'strength', 'family', 'sieve'] as const
+export const TEXT_KEYS = ['wc', 'wc_corrected', 'cementitious', 'sand_type', 'requirement_type', 'slump', 'retention_minutes', 'strength_age', 'strength', 'family', 'sieve'] as const
 
 type ListKey = (typeof LIST_KEYS)[number]
 type TextKey = (typeof TEXT_KEYS)[number]
@@ -83,6 +84,7 @@ export function toRequest(c: Criteria): SearchRequest {
   const cem = splitNumbers(c.cementitious)
   if (cem.length) out.cementitious = cem
   if (c.sand_type) out.sand_type = c.sand_type
+  if (c.requirement_type) out.requirement_type = c.requirement_type
   if (c.family) out.family = c.family
   // Slump needs its retention time and strength needs its age, as on the server.
   if (c.slump.trim() && c.retention_minutes !== '') {
@@ -113,6 +115,7 @@ export function fromServer(raw: Record<string, unknown>): Criteria {
   for (const k of TEXT_KEYS) c[k] = list(raw[k]).join(', ')
   c.family = list(raw.family)[0] ?? ''
   c.sand_type = list(raw.sand_type)[0] ?? ''
+  c.requirement_type = list(raw.requirement_type)[0] ?? ''
   c.strength_age = list(raw.strength_age)[0] ?? ''
   c.retention_minutes = list(raw.retention_minutes)[0] ?? ''
   // A project's requirement has no sieve analysis (the web clears it too).
@@ -244,6 +247,10 @@ export function criteriaChips(c: Criteria): { text: string; label: string }[] {
   if (c.sand_type) {
     const t = SAND_TYPES.find((s) => s.value === c.sand_type)?.label ?? c.sand_type
     add(t, `sand type, ${t}`)
+  }
+  if (c.requirement_type) {
+    const t = requirementLabel(c.requirement_type)
+    add(t, `requirement type, ${t}`)
   }
   if (c.sand_zone.length) add(c.sand_zone.join(', '), `sand zone, ${c.sand_zone.join(' or ')}`)
   if (c.fine_aggregate_source.length) add(c.fine_aggregate_source.join(', '), `fine aggregate source, ${c.fine_aggregate_source.join(' or ')}`)

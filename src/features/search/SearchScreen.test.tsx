@@ -255,3 +255,26 @@ describe('W/C criteria (UAT, 18 Nov 2026: the legacy search\'s W/C ratio SSD and
     qc.clear()
   })
 })
+
+describe('requirement type criterion (UAT, 27 Nov 2026: as the old app\'s search)', () => {
+  beforeEach(() => mockApi.mockReset())
+
+  it('offers slump, flow and flow + slump and searches with the one chosen', async () => {
+    mockApi.mockImplementation(async (path: string) => {
+      if (path === '/lookups/') return []
+      if (path === '/search/') return { criteria: {}, products: 0, trials: 0, results: [] }
+      throw new Error(`unexpected ${path}`)
+    })
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } })
+    await render(<QueryClientProvider client={qc}><SearchScreen /></QueryClientProvider>)
+    await fireEvent.press(screen.getByRole('button', { name: 'Edit criteria' }))
+    await fireEvent.press(await screen.findByRole('button', { name: 'Requirement type: Any requirement type' }))
+    expect(screen.getAllByText('Slump')).toHaveLength(2) // the Slump field and the option
+    expect(screen.getByText('Flow + slump')).toBeTruthy()
+    await fireEvent.press(screen.getByText('Flow'))
+    expect(screen.getByText('Only trials measured as flow.')).toBeTruthy()
+    await fireEvent.press(screen.getByRole('button', { name: 'Search products' }))
+    await waitFor(() => expect(mockApi).toHaveBeenCalledWith('/search/', { method: 'POST', body: { requirement_type: 'flow' } }))
+    qc.clear()
+  })
+})
