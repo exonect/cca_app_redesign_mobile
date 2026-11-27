@@ -2,7 +2,7 @@ import { useState, type ReactNode } from 'react'
 import { Pressable, Text, View } from 'react-native'
 
 import { useLookups } from '@/api/hooks'
-import { Banner, Button, Chips, Field, H2, MultiPicker, Picker, Small, TextField } from '@/ui/kit'
+import { Banner, Button, Chips, Field, H2, MultiPicker, Picker, Small } from '@/ui/kit'
 import { color, font } from '@/ui/theme'
 
 import { Sheet } from '@/features/projects/Sheet'
@@ -75,11 +75,10 @@ function Body_({ open, initial, onClose, onApply, serverErrors }: Props) {
         <NumberPick category="wc_ratio_corrected" label="W/C ratio, corrected" field="W/C ratio, corrected, ±0.02" any="Any W/C ratio"
           hint={`${rangeHint('wc', c.wc_corrected) ? `Matches a corrected W/C of ${rangeHint('wc', c.wc_corrected)}. ` : 'After the moisture and absorption correction. '}CCA trials only: imported history has no corrected ratio.`}
           value={c.wc_corrected} error={errors.wc_corrected} onChange={(v) => set('wc_corrected', v)} />
-        <Field label="Cementitious content, ±50 kg/m³" error={errors.cementitious}
-          hint={rangeHint('cementitious', c.cementitious) ? `Matches ${rangeHint('cementitious', c.cementitious)}.` : 'Cement plus mineral admixtures.'}>
-          <TextField accessibilityLabel="Cementitious content, kg per cubic metre" keyboardType="numbers-and-punctuation" unit="kg/m³"
-            invalid={Boolean(errors.cementitious)} value={c.cementitious} onChangeText={(t) => set('cementitious', t)} />
-        </Field>
+        {/* UAT, 27 Nov 2026: the legacy multi select of the Cementitious Content master list, as the project form. */}
+        <NumberMulti category="cementitious_content" label="Cementitious content" field="Cementitious content, ±50 kg/m³" noun="cementitious contents" unit="kg/m³"
+          hint={rangeHint('cementitious', c.cementitious) ? `Matches ${rangeHint('cementitious', c.cementitious)}.` : 'Cement plus mineral admixtures.'}
+          value={splitNumbers(c.cementitious)} error={errors.cementitious} onChange={(v) => set('cementitious', v.join(', '))} />
       </Group>
 
       <Group title="Sand">

@@ -306,3 +306,32 @@ describe('sand type criterion (UAT, 27 Nov 2026: the Sand Type master list, as t
     qc.clear()
   })
 })
+
+describe('cementitious content criterion (UAT, 27 Nov 2026: master list multi select, as the old app)', () => {
+  beforeEach(() => mockApi.mockReset())
+
+  it('offers only the numbers on the list, ascending, and searches with several', async () => {
+    mockApi.mockImplementation(async (path: string, opts?: { query?: { category?: string } }) => {
+      if (path === '/lookups/' && opts?.query?.category === 'cementitious_content') {
+        return ['450', '400', '420', 'NA'].map((value, i) => ({ id: 70 + i, category: 'cementitious_content', value }))
+      }
+      if (path === '/lookups/') return []
+      if (path === '/search/') return { criteria: {}, products: 0, trials: 0, results: [] }
+      throw new Error(`unexpected ${path}`)
+    })
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } })
+    await render(<QueryClientProvider client={qc}><SearchScreen /></QueryClientProvider>)
+    await fireEvent.press(screen.getByRole('button', { name: 'Edit criteria' }))
+    const field = await screen.findByRole('button', { name: /^Cementitious content: none chosen/ })
+    await waitFor(() => expect(field.props.accessibilityState?.disabled).toBeFalsy())
+    await fireEvent.press(field)
+    expect(screen.getAllByRole('checkbox').map((c) => c.props.accessibilityLabel)).toEqual(['400 kg/m³', '420 kg/m³', '450 kg/m³'])
+    await fireEvent.press(screen.getByRole('checkbox', { name: '400 kg/m³' }))
+    await fireEvent.press(screen.getByRole('checkbox', { name: '450 kg/m³' }))
+    await fireEvent.press(screen.getByRole('button', { name: 'Done' }))
+    expect(screen.getByText('Matches 350 to 450 kg/m³, or 400 to 500 kg/m³.')).toBeTruthy()
+    await fireEvent.press(screen.getByRole('button', { name: 'Search products' }))
+    await waitFor(() => expect(mockApi).toHaveBeenCalledWith('/search/', { method: 'POST', body: { cementitious: ['400', '450'] } }))
+    qc.clear()
+  })
+})
